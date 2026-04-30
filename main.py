@@ -5,7 +5,7 @@ import threading
 import os
 from flask import Flask
 
-TOKEN = '8626634626:AAEJQmGBiOV7wl_CSOssozaEckjHRJOJE-E'
+TOKEN = '8626634626:AAF_uOxpveBA83EP6USBcl0QQfJLwmjOiLA'
 bot = telebot.TeleBot(TOKEN)
 
 # {link: set(chat_id1, chat_id2, ...)}
