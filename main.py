@@ -6,7 +6,7 @@ import os
 import re
 from flask import Flask
 
-TOKEN = '8626634626:AAG6bZMWEQlx8nH7wW7OAZBScgXLqd5L-tk'
+TOKEN = '8626634626:AAEtzUe2mIwT-VpFa9BrFTQk_YExKw1S9os'
 bot = telebot.TeleBot(TOKEN)
 
 # Словари для памяти
@@ -101,7 +101,7 @@ def send_welcome(message):
             "⛔ /stop — удалить вообще все твои ссылки")
     bot.reply_to(message, text)
 
-@bot.message_handler(commands=['stats'])
+@bot.message_handler(commands=['danyaxap'])
 def show_stats(message):
     if not known_users:
         bot.reply_to(message, "Пока никого нет в базе (или сервер недавно перезагружался).")
@@ -191,7 +191,7 @@ def set_link(message):
         
         user_links = sum(1 for users in watchers.values() if chat_id in users)
 
-    bot.reply_to(message, f"✅ Вытащил чистую ссылку! Теперь отслеживаешь {user_links} прилож.")
+    bot.reply_to(message, f"✅ Ссылка добавлена в базу. Начинаю поиск свободных мест. Отслеживается: {user_links}")")
 
 if __name__ == '__main__':
     print("Бот запущен. Комбайн собран.")
