@@ -136,6 +136,38 @@ def callback_query(call):
     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=get_settings_keyboard(call.message.chat.id))
     bot.answer_callback_query(call.id, "Обновлено")
 
+@bot.message_handler(commands=['list'])
+def list_links(message):
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("SELECT url FROM links WHERE chat_id = %s", (message.chat.id,))
+    rows = cur.fetchall(); cur.close(); conn.close()
+    bot.reply_to(message, "📋 Твои ссылки:\n\n" + "\n".join([r[0] for r in rows]) if rows else "Список пуст.")
+
+@bot.message_handler(commands=['del'])
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('del') and m.reply_to_message)
+def delete_link(message):
+    target = None
+    if message.reply_to_message and message.reply_to_message.text:
+        match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', message.reply_to_message.text)
+        if match: target = match.group(1)
+    if not target and message.text.startswith('/del'):
+        parts = message.text.split(maxsplit=1)
+        if len(parts) > 1: target = parts[1].strip()
+    if target:
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (message.chat.id, target))
+        conn.commit(); cur.close(); conn.close()
+        bot.reply_to(message, "🗑 Удалено.")
+    else: bot.reply_to(message, "❌ Ссылка не найдена.")
+
+@bot.message_handler(commands=['danyaxap'])
+def admin_stats(message):
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("SELECT username FROM users"); users = cur.fetchall()
+    cur.execute("SELECT COUNT(*) FROM links"); links_count = cur.fetchone()[0]
+    bot.reply_to(message, f"📊 Юзеров: {len(users)}\n🔗 Ссылок: {links_count}\n\n" + "\n".join([u[0] for u in users]))
+    cur.close(); conn.close()
+
 @bot.message_handler(func=lambda m: m.text and 'testflight.apple.com/join/' in m.text)
 def add_link(message):
     match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', message.text)
