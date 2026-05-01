@@ -109,7 +109,11 @@ def send_welcome(message):
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("INSERT INTO users (chat_id, username) VALUES (%s, %s) ON CONFLICT (chat_id) DO UPDATE SET username = %s", (uid, name, name))
     conn.commit(); cur.close(); conn.close()
-    text = ("👋 <b>NuviraByteCore TestFlight Tracker</b>\n\nПришли ссылку для отслеживания.\n⚙️ Настройки уведомлений:")
+    
+    text = (f"👋 <b><a href='https://t.me/NuviraByteCore'>NuviraByteCore</a> TestFlight Tracker</b>\n\n"
+            f"Пришли ссылку для отслеживания.\n"
+            f"⚙️ Настройки уведомлений:")
+    
     bot.send_message(uid, text, parse_mode='html', reply_markup=get_settings_keyboard(uid), disable_web_page_preview=True)
 
 @bot.callback_query_handler(func=lambda call: True)
