@@ -18,22 +18,23 @@
             color: var(--text-color);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             margin: 0; 
-            padding: 0 0 80px 0;
+            padding: 0 0 20px 0;
             -webkit-font-smoothing: antialiased;
         }
         
-        /* Шапка с логотипом */
         .hero { text-align: center; padding: 20px 20px 10px; }
         .hero img { width: 110px; height: 110px; margin-bottom: 15px; border-radius: 20px; object-fit: cover; }
         .hero h1 { font-size: 22px; margin: 0 0 8px; font-weight: 600; letter-spacing: 0.3px; }
         .hero p { font-size: 14px; color: var(--hint-color); margin: 0; line-height: 1.4; }
 
-        /* Список приложений */
         .section { margin: 20px 16px; }
         .section-title { font-size: 12px; color: var(--hint-color); text-transform: uppercase; margin-bottom: 8px; margin-left: 16px; letter-spacing: 0.5px; }
 
         .list-group { background-color: var(--sec-bg-color); border-radius: 10px; overflow: hidden; }
-        .list-item { display: flex; align-items: center; padding: 10px 16px; position: relative; }
+        
+        .list-item { display: flex; align-items: center; padding: 10px 16px; position: relative; cursor: pointer; transition: background-color 0.2s; }
+        .list-item:active { background-color: #2c2c2e; } 
+        
         .list-item:not(:last-child)::after {
             content: ''; position: absolute; bottom: 0; left: 60px; right: 0; height: 1px; background-color: var(--separator-color);
         }
@@ -43,27 +44,27 @@
             object-fit: cover; display: flex; align-items: center; justify-content: center; 
             font-weight: 600; color: #fff; font-size: 18px;
         }
-        .item-content { flex: 1; display: flex; flex-direction: column; justify-content: center; }
-        .item-title { font-size: 16px; font-weight: 500; margin-bottom: 2px; }
+        .item-content { flex: 1; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
+        .item-title { font-size: 16px; font-weight: 500; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .item-subtitle { font-size: 13px; color: var(--hint-color); }
 
-        /* Кнопка Add Link */
-        .add-link { color: var(--accent-color); font-weight: 500; cursor: pointer; }
+        .add-link { color: var(--accent-color); font-weight: 500; }
         .add-link .add-icon-box {
             width: 38px; height: 38px; border-radius: 50%; margin-right: 14px;
             display: flex; align-items: center; justify-content: center;
         }
 
-        /* Нижняя навигация */
-        .bottom-nav {
-            position: fixed; bottom: 0; left: 0; right: 0; height: 60px; padding-bottom: 20px;
-            background-color: rgba(28, 28, 30, 0.85); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
-            display: flex; justify-content: space-around; align-items: center;
-            border-top: 0.5px solid rgba(255,255,255,0.1); z-index: 100;
-        }
-        .nav-item { display: flex; flex-direction: column; align-items: center; color: var(--hint-color); font-size: 10px; gap: 4px; font-weight: 500; }
-        .nav-item.active { color: var(--accent-color); }
-        .nav-icon { width: 24px; height: 24px; }
+        /* Стили модального окна добавления */
+        .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
+        .modal-content { background: #242426; width: 100%; border-radius: 14px; padding: 20px; box-sizing: border-box; }
+        .modal-content h3 { margin-top: 0; margin-bottom: 15px; font-size: 18px; text-align: center; font-weight: 600; }
+        #tf-input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--separator-color); background: #000; color: #fff; margin-bottom: 20px; box-sizing: border-box; font-size: 14px; outline: none; }
+        #tf-input:focus { border-color: var(--accent-color); }
+        .modal-buttons { display: flex; gap: 10px; }
+        .btn { flex: 1; padding: 12px; border-radius: 8px; border: none; font-weight: 600; font-size: 15px; cursor: pointer; }
+        .btn-cancel { background: #38383a; color: #fff; }
+        .btn-save { background: var(--accent-color); color: #fff; }
+        .btn:active { opacity: 0.8; }
     </style>
 </head>
 <body>
@@ -76,36 +77,21 @@
     <div class="section">
         <div class="section-title">Following Apps</div>
         <div class="list-group" id="app-list">
-            
-            <div class="list-item add-link" onclick="window.Telegram.WebApp.close()">
-                <div class="add-icon-box">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path><line x1="14" y1="14" x2="19" y2="19"></line><line x1="19" y1="14" x2="14" y2="19"></line></svg>
-                </div>
-                <div class="item-content">
-                    <div class="item-title">Add Link</div>
-                </div>
-            </div>
-
-            <!-- Индикатор загрузки -->
             <div id="loader" class="list-item">
-                <div class="item-content"><div class="item-title" style="color: var(--hint-color);">Loading...</div></div>
+                <div class="item-content"><div class="item-title" style="color: var(--hint-color);">Загрузка...</div></div>
             </div>
-            
         </div>
     </div>
 
-    <div class="bottom-nav">
-        <div class="nav-item active">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
-            Home
-        </div>
-        <div class="nav-item">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z"/></svg>
-            Apps
-        </div>
-        <div class="nav-item">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            Settings
+    <!-- Модальное окно -->
+    <div id="add-modal" class="modal">
+        <div class="modal-content">
+            <h3>Новая ссылка</h3>
+            <input type="url" id="tf-input" placeholder="https://testflight.apple.com/join/..." autocomplete="off">
+            <div class="modal-buttons">
+                <button class="btn btn-cancel" onclick="closeModal()">Отмена</button>
+                <button class="btn btn-save" onclick="submitLink()" id="btn-save">Добавить</button>
+            </div>
         </div>
     </div>
 
@@ -115,20 +101,73 @@
         tg.setHeaderColor('#000000');
         tg.setBackgroundColor('#000000');
 
+        function openAddModal() {
+            tg.HapticFeedback.impactOccurred('light');
+            document.getElementById('add-modal').style.display = 'flex';
+            document.getElementById('tf-input').focus();
+        }
+
+        function closeModal() {
+            document.getElementById('add-modal').style.display = 'none';
+            document.getElementById('tf-input').value = '';
+        }
+
+        async function submitLink() {
+            const uid = tg.initDataUnsafe.user?.id;
+            const url = document.getElementById('tf-input').value;
+            if (!uid || !url) return;
+
+            tg.HapticFeedback.impactOccurred('medium');
+            const btn = document.getElementById('btn-save');
+            btn.innerText = 'Секунду...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/api/add_link', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({uid: uid, url: url})
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    tg.HapticFeedback.impactOccurred('success');
+                    closeModal();
+                    loadLinks(); // Перезагружаем список
+                } else {
+                    tg.showAlert(data.error);
+                }
+            } catch(e) {
+                tg.showAlert('Ошибка соединения');
+            }
+            btn.innerText = 'Добавить';
+            btn.disabled = false;
+        }
+
         async function loadLinks() {
             const uid = tg.initDataUnsafe.user?.id;
-            const loader = document.getElementById('loader');
             const list = document.getElementById('app-list');
             
+            // Базовая кнопка добавления всегда сверху
+            list.innerHTML = `
+                <div class="list-item add-link" onclick="openAddModal()">
+                    <div class="add-icon-box">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path><line x1="14" y1="14" x2="19" y2="19"></line><line x1="19" y1="14" x2="14" y2="19"></line></svg>
+                    </div>
+                    <div class="item-content">
+                        <div class="item-title">Add Link</div>
+                    </div>
+                </div>
+            `;
+
             if (!uid) {
-                loader.innerHTML = '<div class="item-content"><div class="item-title">Локальный тест</div></div>';
+                list.innerHTML += '<div class="list-item"><div class="item-content"><div class="item-title">Локальный тест</div></div></div>';
                 return;
             }
 
             try {
                 const response = await fetch(`/api/get_links?uid=${uid}`);
                 const links = await response.json();
-                loader.remove(); 
                 
                 links.forEach(app => {
                     const card = document.createElement('div');
@@ -148,13 +187,34 @@
                         ${iconHtml}
                         <div class="item-content">
                             <div class="item-title">${app.name}</div>
-                            <div class="item-subtitle">1 link • Active</div>
+                            <div class="item-subtitle">Tap to delete • Active</div>
                         </div>
                     `;
+                    
+                    // Логика удаления
+                    card.onclick = function() {
+                        tg.HapticFeedback.impactOccurred('light');
+                        tg.showConfirm(`Удалить отслеживание слотов для ${app.name}?`, async function(confirmed) {
+                            if(confirmed) {
+                                try {
+                                    await fetch('/api/delete_link', {
+                                        method: 'POST',
+                                        headers: {'Content-Type': 'application/json'},
+                                        body: JSON.stringify({uid: uid, url: app.url})
+                                    });
+                                    card.remove();
+                                    tg.HapticFeedback.impactOccurred('success');
+                                } catch(e) {
+                                    tg.showAlert('Ошибка удаления');
+                                }
+                            }
+                        });
+                    };
+
                     list.appendChild(card);
                 });
             } catch (e) {
-                loader.innerHTML = '<div class="item-content"><div class="item-title" style="color: #ff375f;">Ошибка загрузки</div></div>';
+                list.innerHTML += '<div class="list-item"><div class="item-content"><div class="item-title" style="color: #ff375f;">Ошибка загрузки</div></div></div>';
             }
         }
         
