@@ -51,11 +51,16 @@ def check_testflight_slot(url):
     try:
         response = requests.get(no_cache_url, headers=HEADERS, timeout=10)
         if response.status_code == 200:
-            clean_text = response.text.replace(' ', '').replace('\n', '')
-            if '"status":"ACCEPTING"' in clean_text or "JointheBeta" in clean_text:
-                return "OPEN"
-            elif '"status":"FULL"' in clean_text or '"status":"CLOSED"' in clean_text or "Thisbetaisfull" in clean_text:
+            text = response.text.lower() # Переводим все в нижний регистр для надежности
+            
+            # Сначала проверяем признаки того, что мест нет
+            if '"status":"full"' in text or '"status":"closed"' in text or 'beta is full' in text or 'not accepting' in text:
                 return "FULL"
+            
+            # Затем проверяем, что места есть
+            if '"status":"accepting"' in text or 'join the' in text or 'start testing' in text:
+                return "OPEN"
+                
             return "ERROR_PARSE" 
         else:
             return f"ERROR_{response.status_code}"
@@ -191,7 +196,6 @@ def admin_stats(message):
     bot.reply_to(message, f"📊 Юзеров: {len(users)}\n🔗 Ссылок: {links_count}\n\n" + "\n".join([u[0] for u in users]))
     cur.close(); conn.close()
 
-# --- НОВАЯ КОМАНДА ДЛЯ ТЕСТИРОВАНИЯ APPLE ---
 @bot.message_handler(commands=['test'])
 def test_apple_connection(message):
     parts = message.text.split(maxsplit=1)
@@ -205,12 +209,12 @@ def test_apple_connection(message):
     try:
         res = requests.get(url, headers=HEADERS, timeout=10)
         status_code = res.status_code
-        text_preview = res.text[:300].replace('\n', ' ') 
         
         if status_code == 403 or status_code == 429:
-            bot.reply_to(message, f"🚫 Код: {status_code}. Apple заблокировал IP сервера Render. Мониторинг временно слеп.")
+            bot.reply_to(message, f"🚫 Код: {status_code}. Apple заблокировал IP сервера Render.")
         elif status_code == 200:
-            bot.reply_to(message, f"✅ Код 200 (Доступ есть).\nКусок кода от Apple:\n{text_preview}...")
+            parsed_status = check_testflight_slot(url)
+            bot.reply_to(message, f"✅ Код 200 (Доступ есть).\n🤖 Парсер увидел статус: {parsed_status}")
         else:
             bot.reply_to(message, f"⚠️ Неизвестный код: {status_code}")
     except Exception as e:
