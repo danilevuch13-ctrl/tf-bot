@@ -194,13 +194,14 @@ def api_get_links():
     uid = request.args.get('uid')
     if not uid: return jsonify([])
     conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("SELECT url FROM links WHERE chat_id = %s", (uid,))
+    # ТЕПЕРЬ ЗАБИРАЕМ И СТАТУС ССЫЛКИ
+    cur.execute("SELECT url, last_status FROM links WHERE chat_id = %s", (uid,))
     rows = cur.fetchall(); cur.close(); conn.close()
     
     data = []
-    for (url,) in rows:
+    for url, status in rows:
         name, icon = get_link_metadata(url)
-        data.append({'url': url, 'name': name, 'icon': icon})
+        data.append({'url': url, 'name': name, 'icon': icon, 'status': status})
     return jsonify(data)
 
 @app.route('/api/add_link', methods=['POST'])
