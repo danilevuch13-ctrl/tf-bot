@@ -104,13 +104,14 @@ def monitor_logic():
                 records = cur.fetchall()
                 if not records: continue
                 
-                if current_status != records[0][1]:
+                old_status = records[0][1]
+                if current_status != old_status:
                     for chat_id, _, silent, notify_full in records:
                         try:
                             if current_status == "OPEN":
                                 app_name, _ = get_link_metadata(url)
                                 bot.send_message(chat_id, f"🟢 Место появилось!\n📱 {app_name}\n{url}", disable_notification=silent)
-                            elif current_status == "FULL" and notify_full:
+                            elif current_status == "FULL" and notify_full and old_status != "CHECKING":
                                 bot.send_message(chat_id, f"🔴 Места закончились для:\n{url}", disable_notification=silent)
                         except: pass
                     cur.execute("UPDATE links SET last_status = %s WHERE url = %s", (current_status, url))
