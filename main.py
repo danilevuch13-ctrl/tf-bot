@@ -51,14 +51,16 @@ def check_testflight_slot(url):
     try:
         response = requests.get(no_cache_url, headers=HEADERS, timeout=10)
         if response.status_code == 200:
-            # Ищем системный статус Apple в JSON-коде страницы
-            if re.search(r'"status"\s*:\s*"ACCEPTING"', response.text) or "Join the Beta" in response.text:
+            clean_text = response.text.replace(' ', '').replace('\n', '')
+            if '"status":"ACCEPTING"' in clean_text or "JointheBeta" in clean_text:
                 return "OPEN"
-            elif re.search(r'"status"\s*:\s*"(FULL|CLOSED)"', response.text) or "This beta is full" in response.text:
+            elif '"status":"FULL"' in clean_text or '"status":"CLOSED"' in clean_text or "Thisbetaisfull" in clean_text:
                 return "FULL"
-            return "ERROR" # Если страница отдала 200, но статусов нет (капча/бан)
+            return "ERROR_PARSE" 
+        else:
+            return f"ERROR_{response.status_code}"
     except: pass
-    return "ERROR"
+    return "ERROR_REQ"
 
 def get_link_metadata(url):
     try:
@@ -85,8 +87,8 @@ def monitor_logic():
             for url in urls:
                 current_status = check_testflight_slot(url)
                 
-                if current_status == "ERROR":
-                    print(f"⚠️ Ошибка проверки или бан IP Apple для: {url}")
+                if "ERROR" in current_status:
+                    print(f"⚠️ Ошибка проверки {current_status} для: {url}")
                     time.sleep(3)
                     continue 
                     
@@ -189,6 +191,31 @@ def admin_stats(message):
     bot.reply_to(message, f"📊 Юзеров: {len(users)}\n🔗 Ссылок: {links_count}\n\n" + "\n".join([u[0] for u in users]))
     cur.close(); conn.close()
 
+# --- НОВАЯ КОМАНДА ДЛЯ ТЕСТИРОВАНИЯ APPLE ---
+@bot.message_handler(commands=['test'])
+def test_apple_connection(message):
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        bot.reply_to(message, "Отправь так: /test ссылка_testflight")
+        return
+        
+    url = parts[1].strip()
+    bot.reply_to(message, "⏳ Стучусь к Apple с сервера Render...")
+    
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=10)
+        status_code = res.status_code
+        text_preview = res.text[:300].replace('\n', ' ') 
+        
+        if status_code == 403 or status_code == 429:
+            bot.reply_to(message, f"🚫 Код: {status_code}. Apple заблокировал IP сервера Render. Мониторинг временно слеп.")
+        elif status_code == 200:
+            bot.reply_to(message, f"✅ Код 200 (Доступ есть).\nКусок кода от Apple:\n{text_preview}...")
+        else:
+            bot.reply_to(message, f"⚠️ Неизвестный код: {status_code}")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка соединения: {e}")
+
 @bot.message_handler(func=lambda m: m.text and 'testflight.apple.com/join/' in m.text)
 def add_link(message):
     match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', message.text)
@@ -196,7 +223,6 @@ def add_link(message):
         url = match.group(1)
         conn = get_db_connection(); cur = conn.cursor()
         try:
-            # Принудительно ставим статус CHECKING при добавлении
             cur.execute("INSERT INTO links (chat_id, url, last_status) VALUES (%s, %s, 'CHECKING')", (message.chat.id, url))
             conn.commit()
             app_name, _ = get_link_metadata(url)
@@ -239,7 +265,6 @@ def api_add_link():
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # Принудительно ставим статус CHECKING при добавлении
         cur.execute("INSERT INTO links (chat_id, url, last_status) VALUES (%s, %s, 'CHECKING')", (uid, url))
         conn.commit()
         cur.close(); conn.close()
