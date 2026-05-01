@@ -5,7 +5,7 @@ import threading
 import os
 import re
 import psycopg2
-from flask import Flask, render_template
+from flask import Flask, render_template, request, jsonify
 from telebot import types
 
 # --- КОНФИГУРАЦИЯ ---
@@ -84,7 +84,7 @@ def monitor_logic():
                     cur.execute("UPDATE links SET last_status = %s WHERE url = %s", (current_status, url))
             conn.commit(); cur.close(); conn.close()
         except Exception as e: print(f"Monitor error: {e}")
-        time.sleep(5) # Задержка 5 секунд для стабильности
+        time.sleep(5)
 
 # --- КЛАВИАТУРЫ ---
 def get_settings_keyboard(chat_id):
@@ -168,18 +168,38 @@ def add_link(message):
         except: bot.reply_to(message, "⚠️ Уже в списке.")
         cur.close(); conn.close()
 
-# --- ВЕБ-СЕРВЕР FLASK ---
+# --- ВЕБ-СЕРВЕР FLASK И API ---
 app = Flask(__name__, template_folder='templates')
 
 @app.route('/')
 def home():
     return render_template('index.html')
 
+@app.route('/api/links')
+def api_links():
+    chat_id = request.args.get('chat_id')
+    if not chat_id: return jsonify([])
+    
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("SELECT url, last_status FROM links WHERE chat_id = %s", (chat_id,))
+    rows = cur.fetchall(); cur.close(); conn.close()
+    return jsonify([{"url": r[0], "status": r[1]} for r in rows])
+
+@app.route('/api/delete', methods=['POST'])
+def api_delete():
+    data = request.json
+    chat_id = data.get('chat_id')
+    url = data.get('url')
+    
+    if chat_id and url:
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (chat_id, url))
+        conn.commit(); cur.close(); conn.close()
+        return jsonify({"success": True})
+    return jsonify({"success": False})
+
 if __name__ == '__main__':
     init_db()
-    # Запуск Flask в отдельном потоке
     threading.Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))), daemon=True).start()
-    # Запуск мониторинга в отдельном потоке
     threading.Thread(target=monitor_logic, daemon=True).start()
-    # Основной цикл бота
     bot.infinity_polling()
