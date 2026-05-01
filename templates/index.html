@@ -5,47 +5,135 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
+        :root {
+            --bg-gradient-1: #698ca6; /* Sierra Blue */
+            --bg-gradient-2: #243642;
+        }
+        
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background-color: var(--tg-theme-bg-color, #ffffff);
-            color: var(--tg-theme-text-color, #000000);
             margin: 0; padding: 20px;
-            display: flex; flex-direction: column; align-items: center;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+            background: linear-gradient(135deg, var(--bg-gradient-1), var(--bg-gradient-2));
+            background-attachment: fixed; color: #ffffff; min-height: 100vh;
         }
-        .container { width: 100%; max-width: 400px; }
-        .header { text-align: center; margin-bottom: 25px; }
-        .card {
-            background: var(--tg-theme-secondary-bg-color, #f0f0f0);
-            padding: 15px; border-radius: 12px; margin-bottom: 15px;
-            border: 1px solid rgba(0,0,0,0.05);
+
+        .glass {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 24px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
         }
-        .status { font-weight: bold; color: var(--tg-theme-button-color, #2481cc); }
+
+        .container { max-width: 400px; margin: 0 auto; padding-bottom: 20px; }
+        .header { text-align: center; margin-bottom: 25px; padding: 20px; }
+        h2 { margin: 0; font-size: 1.6rem; font-weight: 700; letter-spacing: 0.5px; }
+        .subtitle { margin: 8px 0 0; opacity: 0.8; font-size: 0.9rem; }
+
+        .card { padding: 20px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 12px; }
+        .url { 
+            font-size: 0.85rem; opacity: 0.9; word-break: break-all; 
+            background: rgba(0, 0, 0, 0.15); padding: 10px; border-radius: 12px; font-family: monospace;
+        }
+        .status { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 0.9rem; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; }
+
         .btn {
-            background: var(--tg-theme-button-color, #2481cc);
-            color: var(--tg-theme-button-text-color, #ffffff);
-            border: none; padding: 14px; border-radius: 10px;
-            width: 100%; font-weight: bold; cursor: pointer; font-size: 1rem;
+            background: rgba(255, 255, 255, 0.15); color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3); padding: 16px;
+            border-radius: 18px; font-weight: 600; font-size: 1.05rem;
+            width: 100%; cursor: pointer; transition: all 0.2s ease;
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
         }
+        .btn:active { background: rgba(255, 255, 255, 0.25); transform: scale(0.97); }
+
+        .btn-delete {
+            background: rgba(255, 69, 58, 0.15); border-color: rgba(255, 69, 58, 0.4);
+            color: #ff453a; padding: 12px; font-size: 0.9rem; margin-top: 5px;
+        }
+        .btn-delete:active { background: rgba(255, 69, 58, 0.25); }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
+        <div class="glass header">
             <h2>NuviraByteCore</h2>
-            <p>Панель управления ссылками</p>
+            <p class="subtitle">Панель управления</p>
         </div>
+
         <div id="links">
-            <div class="card">
-                <p>Все системы работают штатно.</p>
-                <p class="status">Мониторинг: Активен</p>
-            </div>
+            <p style="text-align:center;">Загрузка базы данных...</p>
         </div>
-        <button class="btn" onclick="window.Telegram.WebApp.close()">Вернуться в чат</button>
+
+        <button class="glass btn" onclick="window.Telegram.WebApp.close()" style="margin-top: 10px;">Закрыть приложение</button>
     </div>
+    
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
         tg.ready();
+        
+        const userId = tg.initDataUnsafe?.user?.id;
+        const linksContainer = document.getElementById('links');
+
+        async function loadLinks() {
+            if (!userId) {
+                linksContainer.innerHTML = '<p style="text-align:center;">Открой приложение через Telegram бота.</p>';
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/links?chat_id=${userId}`);
+                const links = await response.json();
+                
+                if (links.length === 0) {
+                    linksContainer.innerHTML = '<p style="text-align:center;">У тебя пока нет отслеживаемых ссылок.</p>';
+                    return;
+                }
+                
+                linksContainer.innerHTML = '';
+                
+                links.forEach(link => {
+                    const isOpen = link.status === "OPEN";
+                    const statusText = isOpen ? "СЛОТ ОТКРЫТ" : "Мест нет";
+                    const statusColor = isOpen ? "#32d74b" : "#ff453a";
+                    
+                    const card = document.createElement('div');
+                    card.className = 'glass card';
+                    card.innerHTML = `
+                        <div class="status">
+                            <div class="dot" style="background: ${statusColor}; box-shadow: 0 0 10px ${statusColor};"></div> 
+                            ${statusText}
+                        </div>
+                        <div class="url">${link.url}</div>
+                        <button class="btn btn-delete" onclick="deleteLink('${link.url}')">Удалить из списка</button>
+                    `;
+                    linksContainer.appendChild(card);
+                });
+            } catch (e) {
+                linksContainer.innerHTML = '<p style="text-align:center;">Ошибка соединения с сервером.</p>';
+            }
+        }
+
+        async function deleteLink(url) {
+            tg.HapticFeedback.notificationOccurred('warning');
+            if (!confirm('Точно удалить эту ссылку?')) return;
+            
+            await fetch('/api/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: userId, url: url })
+            });
+            
+            tg.HapticFeedback.notificationOccurred('success');
+            loadLinks();
+        }
+
+        loadLinks();
+
+        if (tg.colorScheme === 'light') {
+            document.body.style.background = 'linear-gradient(135deg, #a8c0d6, #e0e8f0)';
+            document.body.style.color = '#1c1c1e';
+        }
     </script>
 </body>
 </html>
