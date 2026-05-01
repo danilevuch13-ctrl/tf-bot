@@ -191,8 +191,7 @@ def set_link(message):
         watchers[link].add(chat_id)
         
         user_links = sum(1 for users in watchers.values() if chat_id in users)
-
-    bot.reply_to(message, f"✅ Ссылка добавлена в базу. Начинаю поиск свободных мест. Отслеживается: {user_links}")")
+ bot.bot.reply_to(message, f"✅ Ссылка добавлена в базу. Начинаю поиск свободных мест. Отслеживается: {user_links}")
 
 if __name__ == '__main__':
     print("Бот запущен. Комбайн собран.")
