@@ -4,95 +4,526 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #000000;
-            --sec-bg-color: #1c1c1e;
-            --text-color: #ffffff;
-            --hint-color: #8e8e93;
-            --accent-color: #0a84ff;
-            --separator-color: #38383a;
+            --bg: #0a0a0b;
+            --surface: #111113;
+            --surface-2: #18181b;
+            --border: rgba(255,255,255,0.07);
+            --border-bright: rgba(255,255,255,0.12);
+            --text: #f4f4f5;
+            --text-muted: #71717a;
+            --text-dim: #3f3f46;
+            --accent: #3b82f6;
+            --accent-glow: rgba(59,130,246,0.15);
+            --accent-2: #6366f1;
+            --green: #22c55e;
+            --green-glow: rgba(34,197,94,0.12);
+            --red: #ef4444;
+            --red-glow: rgba(239,68,68,0.12);
+            --amber: #f59e0b;
+            --amber-glow: rgba(245,158,11,0.12);
         }
+
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
         body {
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            margin: 0; 
-            padding: 0 0 20px 0;
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'DM Sans', -apple-system, sans-serif;
+            margin: 0;
+            padding: 0 0 32px;
             -webkit-font-smoothing: antialiased;
-        }
-        
-        .hero { text-align: center; padding: 20px 20px 10px; }
-        .hero img { width: 110px; height: 110px; margin-bottom: 15px; border-radius: 20px; object-fit: cover; }
-        .hero h1 { font-size: 22px; margin: 0 0 8px; font-weight: 600; letter-spacing: 0.3px; }
-        .hero p { font-size: 14px; color: var(--hint-color); margin: 0; line-height: 1.4; }
-
-        .section { margin: 20px 16px; }
-        .section-title { font-size: 12px; color: var(--hint-color); text-transform: uppercase; margin-bottom: 8px; margin-left: 16px; letter-spacing: 0.5px; }
-
-        .list-group { background-color: var(--sec-bg-color); border-radius: 10px; overflow: hidden; }
-        
-        .list-item { display: flex; align-items: center; padding: 10px 16px; position: relative; cursor: pointer; transition: background-color 0.2s; }
-        .list-item:active { background-color: #2c2c2e; } 
-        
-        .list-item:not(:last-child)::after {
-            content: ''; position: absolute; bottom: 0; left: 60px; right: 0; height: 1px; background-color: var(--separator-color);
-        }
-        
-        .item-icon { 
-            width: 42px; height: 42px; border-radius: 50%; margin-right: 14px; 
-            object-fit: cover; display: flex; align-items: center; justify-content: center; 
-            font-weight: 600; color: #fff; font-size: 18px;
-        }
-        .item-content { flex: 1; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
-        .item-title { font-size: 16px; font-weight: 500; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .item-subtitle { font-size: 13px; color: var(--hint-color); }
-
-        .add-link { color: var(--accent-color); font-weight: 500; }
-        .add-link .add-icon-box {
-            width: 38px; height: 38px; border-radius: 50%; margin-right: 14px;
-            display: flex; align-items: center; justify-content: center;
+            min-height: 100vh;
+            overflow-x: hidden;
         }
 
-        .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
-        .modal-content { background: #242426; width: 100%; border-radius: 14px; padding: 20px; box-sizing: border-box; }
-        .modal-content h3 { margin-top: 0; margin-bottom: 15px; font-size: 18px; text-align: center; font-weight: 600; }
-        #tf-input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--separator-color); background: #000; color: #fff; margin-bottom: 20px; box-sizing: border-box; font-size: 14px; outline: none; }
-        #tf-input:focus { border-color: var(--accent-color); }
+        /* ── Animated background grid ── */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            top: -120px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 500px;
+            height: 300px;
+            background: radial-gradient(ellipse at center, rgba(59,130,246,0.08) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* ── Hero ── */
+        .hero {
+            position: relative;
+            z-index: 1;
+            text-align: center;
+            padding: 36px 24px 24px;
+            animation: fadeDown 0.5s ease both;
+        }
+
+        .hero-logo-wrap {
+            position: relative;
+            display: inline-block;
+            margin-bottom: 18px;
+        }
+
+        .hero-logo-wrap::before {
+            content: '';
+            position: absolute;
+            inset: -8px;
+            border-radius: 28px;
+            background: radial-gradient(circle, rgba(59,130,246,0.2) 0%, transparent 70%);
+            animation: pulse 3s ease-in-out infinite;
+        }
+
+        .hero img {
+            width: 80px;
+            height: 80px;
+            border-radius: 20px;
+            object-fit: cover;
+            position: relative;
+            display: block;
+            box-shadow: 0 0 0 1px var(--border-bright), 0 8px 32px rgba(0,0,0,0.5);
+        }
+
+        .hero h1 {
+            font-size: 20px;
+            font-weight: 600;
+            margin: 0 0 6px;
+            letter-spacing: -0.3px;
+            line-height: 1.2;
+        }
+
+        .hero h1 span {
+            background: linear-gradient(135deg, #93c5fd, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero p {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin: 0;
+            line-height: 1.5;
+            max-width: 260px;
+            margin: 0 auto;
+        }
+
+        /* ── Stats bar ── */
+        .stats-bar {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            gap: 8px;
+            margin: 0 16px 20px;
+            animation: fadeUp 0.5s 0.1s ease both;
+        }
+
+        .stat-pill {
+            flex: 1;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 12px;
+            text-align: center;
+        }
+
+        .stat-pill .val {
+            font-size: 18px;
+            font-weight: 600;
+            font-family: 'DM Mono', monospace;
+            letter-spacing: -0.5px;
+            line-height: 1;
+            margin-bottom: 3px;
+        }
+
+        .stat-pill .lbl {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* ── Section ── */
+        .section {
+            position: relative;
+            z-index: 1;
+            margin: 0 16px;
+            animation: fadeUp 0.5s 0.15s ease both;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding: 0 4px;
+        }
+
+        .section-title {
+            font-size: 11px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 500;
+        }
+
+        /* ── List ── */
+        .list-group {
+            background: var(--surface);
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        .list-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 14px;
+            position: relative;
+            cursor: pointer;
+            transition: background-color 0.15s;
+        }
+
+        .list-item:active { background-color: var(--surface-2); }
+
+        .list-item:not(:last-child) {
+            border-bottom: 1px solid var(--border);
+        }
+
+        .item-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            margin-right: 12px;
+            object-fit: cover;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            color: #fff;
+            font-size: 17px;
+            border: 1px solid var(--border);
+        }
+
+        .item-content {
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .item-title {
+            font-size: 15px;
+            font-weight: 500;
+            margin-bottom: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            letter-spacing: -0.1px;
+        }
+
+        .item-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .item-arrow {
+            color: var(--text-dim);
+            margin-left: 8px;
+            flex-shrink: 0;
+        }
+
+        /* ── Add button ── */
+        .add-link {
+            color: var(--accent);
+        }
+
+        .add-link .item-title { color: var(--accent); }
+
+        .add-icon-box {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            margin-right: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--accent-glow);
+            border: 1px solid rgba(59,130,246,0.2);
+            flex-shrink: 0;
+            color: var(--accent);
+        }
+
+        /* ── Status badges ── */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            font-weight: 500;
+            padding: 2px 7px;
+            border-radius: 20px;
+            letter-spacing: 0.1px;
+        }
+
+        .badge-dot {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .badge-open {
+            background: var(--green-glow);
+            color: var(--green);
+            border: 1px solid rgba(34,197,94,0.2);
+        }
+        .badge-open .badge-dot { background: var(--green); animation: blink 2s ease infinite; }
+
+        .badge-full {
+            background: var(--red-glow);
+            color: var(--red);
+            border: 1px solid rgba(239,68,68,0.2);
+        }
+        .badge-full .badge-dot { background: var(--red); }
+
+        .badge-check {
+            background: var(--amber-glow);
+            color: var(--amber);
+            border: 1px solid rgba(245,158,11,0.2);
+        }
+        .badge-check .badge-dot { background: var(--amber); animation: blink 1s ease infinite; }
+
+        /* ── Modal ── */
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            align-items: flex-end;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+
+        .modal.open { display: flex; animation: fadeIn 0.2s ease; }
+
+        .modal-sheet {
+            background: #17171a;
+            width: 100%;
+            border-radius: 20px 20px 0 0;
+            padding: 0 0 28px;
+            border: 1px solid var(--border-bright);
+            border-bottom: none;
+            animation: slideUp 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+        }
+
+        .modal-handle {
+            width: 36px;
+            height: 4px;
+            background: var(--border-bright);
+            border-radius: 2px;
+            margin: 12px auto 20px;
+        }
+
+        .modal-title {
+            font-size: 17px;
+            font-weight: 600;
+            text-align: center;
+            margin-bottom: 20px;
+            letter-spacing: -0.2px;
+        }
+
+        .modal-body { padding: 0 16px; }
+
+        .input-wrap {
+            position: relative;
+            margin-bottom: 16px;
+        }
+
+        .input-icon {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            pointer-events: none;
+        }
+
+        #tf-input {
+            width: 100%;
+            padding: 14px 14px 14px 42px;
+            border-radius: 12px;
+            border: 1px solid var(--border-bright);
+            background: var(--surface);
+            color: var(--text);
+            font-size: 14px;
+            font-family: 'DM Sans', sans-serif;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        #tf-input::placeholder { color: var(--text-dim); }
+        #tf-input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
         .modal-buttons { display: flex; gap: 10px; }
-        .btn { flex: 1; padding: 12px; border-radius: 8px; border: none; font-weight: 600; font-size: 15px; cursor: pointer; }
-        .btn-cancel { background: #38383a; color: #fff; }
-        .btn-save { background: var(--accent-color); color: #fff; }
-        .btn:active { opacity: 0.8; }
-        
-        .status-open { color: #32d74b; font-weight: 500; } /* Зеленый iOS */
-        .status-full { color: #ff453a; font-weight: 500; } /* Красный iOS */
-        .status-check { color: #ff9f0a; font-weight: 500; } /* Оранжевый iOS */
+
+        .btn {
+            flex: 1;
+            padding: 14px;
+            border-radius: 12px;
+            border: none;
+            font-weight: 600;
+            font-size: 15px;
+            cursor: pointer;
+            font-family: 'DM Sans', sans-serif;
+            transition: opacity 0.15s, transform 0.1s;
+            letter-spacing: -0.1px;
+        }
+
+        .btn:active { opacity: 0.8; transform: scale(0.98); }
+
+        .btn-cancel {
+            background: var(--surface-2);
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+        }
+
+        .btn-save {
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            color: #fff;
+            box-shadow: 0 4px 16px rgba(59,130,246,0.3);
+        }
+
+        .btn:disabled { opacity: 0.5; }
+
+        /* ── Animations ── */
+        @keyframes fadeDown {
+            from { opacity: 0; transform: translateY(-12px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(100%); }
+            to   { transform: translateY(0); }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; transform: scale(1); }
+            50%       { opacity: 1;   transform: scale(1.05); }
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.3; }
+        }
+
+        @keyframes shimmer {
+            0%   { background-position: -200% 0; }
+            100% { background-position:  200% 0; }
+        }
+
+        /* ── Skeleton loader ── */
+        .skeleton {
+            background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 50%, var(--surface) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.4s ease infinite;
+            border-radius: 6px;
+        }
+
+        .skeleton-icon { width: 44px; height: 44px; border-radius: 12px; margin-right: 12px; flex-shrink: 0; }
+        .skeleton-line { height: 13px; margin-bottom: 6px; }
+        .skeleton-line-sm { height: 11px; width: 60%; }
     </style>
 </head>
 <body>
     <div class="hero">
-        <img src="https://developer.apple.com/assets/elements/icons/testflight/testflight-128x128_2x.png" alt="Apps Logo">
-        <h1>Track Your Favorite Betas</h1>
-        <p>Get instant updates when TestFlight links open, close, or fill up. Stay ahead in testing!</p>
+        <div class="hero-logo-wrap">
+            <img src="https://developer.apple.com/assets/elements/icons/testflight/testflight-128x128_2x.png" alt="TestFlight">
+        </div>
+        <h1>Track Your <span>Favorite Betas</span></h1>
+        <p>Get instant updates when TestFlight links open, close, or fill up.</p>
+    </div>
+
+    <div class="stats-bar" id="stats-bar" style="display:none">
+        <div class="stat-pill">
+            <div class="val" id="stat-total">0</div>
+            <div class="lbl">Tracked</div>
+        </div>
+        <div class="stat-pill">
+            <div class="val" style="color:var(--green)" id="stat-open">0</div>
+            <div class="lbl">Open</div>
+        </div>
+        <div class="stat-pill">
+            <div class="val" style="color:var(--red)" id="stat-full">0</div>
+            <div class="lbl">Full</div>
+        </div>
     </div>
 
     <div class="section">
-        <div class="section-title">Following Apps</div>
+        <div class="section-header">
+            <div class="section-title">Following</div>
+        </div>
         <div class="list-group" id="app-list">
-            <div id="loader" class="list-item">
-                <div class="item-content"><div class="item-title" style="color: var(--hint-color);">Загрузка...</div></div>
+            <!-- skeleton -->
+            <div class="list-item" id="loader">
+                <div class="skeleton skeleton-icon"></div>
+                <div class="item-content">
+                    <div class="skeleton skeleton-line" style="width:55%"></div>
+                    <div class="skeleton skeleton-line-sm"></div>
+                </div>
             </div>
         </div>
     </div>
 
     <div id="add-modal" class="modal">
-        <div class="modal-content">
-            <h3>Новая ссылка</h3>
-            <input type="url" id="tf-input" placeholder="https://testflight.apple.com/join/..." autocomplete="off">
-            <div class="modal-buttons">
-                <button class="btn btn-cancel" onclick="closeModal()">Отмена</button>
-                <button class="btn btn-save" onclick="submitLink()" id="btn-save">Добавить</button>
+        <div class="modal-sheet">
+            <div class="modal-handle"></div>
+            <div class="modal-title">Add TestFlight Link</div>
+            <div class="modal-body">
+                <div class="input-wrap">
+                    <span class="input-icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                    </span>
+                    <input type="url" id="tf-input" placeholder="https://testflight.apple.com/join/..." autocomplete="off">
+                </div>
+                <div class="modal-buttons">
+                    <button class="btn btn-cancel" onclick="closeModal()">Отмена</button>
+                    <button class="btn btn-save" onclick="submitLink()" id="btn-save">Добавить</button>
+                </div>
             </div>
         </div>
     </div>
@@ -100,13 +531,15 @@
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
-        tg.setHeaderColor('#000000');
-        tg.setBackgroundColor('#000000');
+        tg.setHeaderColor('#0a0a0b');
+        tg.setBackgroundColor('#0a0a0b');
 
         function openAddModal() {
             tg.HapticFeedback.impactOccurred('light');
-            document.getElementById('add-modal').style.display = 'flex';
-            document.getElementById('tf-input').focus();
+            const modal = document.getElementById('add-modal');
+            modal.style.display = 'flex';
+            modal.classList.add('open');
+            setTimeout(() => document.getElementById('tf-input').focus(), 300);
         }
 
         function closeModal() {
@@ -121,21 +554,20 @@
 
             tg.HapticFeedback.impactOccurred('medium');
             const btn = document.getElementById('btn-save');
-            btn.innerText = 'Секунду...';
+            btn.innerText = 'Добавление...';
             btn.disabled = true;
 
             try {
                 const response = await fetch('/api/add_link', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({uid: uid, url: url})
+                    body: JSON.stringify({uid, url})
                 });
                 const data = await response.json();
-                
                 if (data.success) {
                     tg.HapticFeedback.notificationOccurred('success');
                     closeModal();
-                    loadLinks(); 
+                    loadLinks();
                 } else {
                     tg.showAlert(data.error);
                 }
@@ -149,72 +581,90 @@
         async function loadLinks() {
             const uid = tg.initDataUnsafe.user?.id;
             const list = document.getElementById('app-list');
-            
-            list.innerHTML = `
+
+            const addBtn = `
                 <div class="list-item add-link" onclick="openAddModal()">
                     <div class="add-icon-box">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path><line x1="14" y1="14" x2="19" y2="19"></line><line x1="19" y1="14" x2="14" y2="19"></line></svg>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     </div>
                     <div class="item-content">
                         <div class="item-title">Add Link</div>
                     </div>
-                </div>
-            `;
+                </div>`;
+
+            list.innerHTML = addBtn;
 
             if (!uid) {
-                list.innerHTML += '<div class="list-item"><div class="item-content"><div class="item-title">Локальный тест</div></div></div>';
+                list.innerHTML += `<div class="list-item"><div class="item-content"><div class="item-title" style="color:var(--text-muted)">Локальный тест</div></div></div>`;
                 return;
             }
 
             try {
                 const response = await fetch(`/api/get_links?uid=${uid}`);
                 const links = await response.json();
-                
+
+                // update stats
+                if (links.length > 0) {
+                    const statsBar = document.getElementById('stats-bar');
+                    statsBar.style.display = 'flex';
+                    document.getElementById('stat-total').textContent = links.length;
+                    document.getElementById('stat-open').textContent = links.filter(a => a.status === 'OPEN').length;
+                    document.getElementById('stat-full').textContent = links.filter(a => a.status === 'FULL').length;
+                }
+
                 links.forEach(app => {
                     const card = document.createElement('div');
                     card.className = 'list-item';
-                    
+
                     let iconHtml = '';
                     if (app.icon.includes('apple_logo') || app.name === 'Unknown App') {
                         const initial = app.name.charAt(0).toUpperCase();
-                        const colors = ['#6A5ACD', '#0a84ff', '#ff375f', '#ff9f0a'];
-                        const bgColor = colors[app.name.length % colors.length];
-                        iconHtml = `<div class="item-icon" style="background-color: ${bgColor};">${initial}</div>`;
+                        const palettes = [
+                            'linear-gradient(135deg,#6366f1,#3b82f6)',
+                            'linear-gradient(135deg,#f43f5e,#ec4899)',
+                            'linear-gradient(135deg,#f59e0b,#ef4444)',
+                            'linear-gradient(135deg,#10b981,#3b82f6)',
+                        ];
+                        const bg = palettes[app.name.length % palettes.length];
+                        iconHtml = `<div class="item-icon" style="background:${bg};">${initial}</div>`;
                     } else {
                         iconHtml = `<img src="${app.icon}" class="item-icon">`;
                     }
 
-                    // Логика вывода статуса
-                    let statusHtml = '';
+                    let badgeHtml = '';
                     if (app.status === 'OPEN') {
-                        statusHtml = '<span class="status-open">🟢 Места есть</span>';
+                        badgeHtml = `<span class="badge badge-open"><span class="badge-dot"></span>Открыто</span>`;
                     } else if (app.status === 'FULL') {
-                        statusHtml = '<span class="status-full">🔴 Мест нет</span>';
+                        badgeHtml = `<span class="badge badge-full"><span class="badge-dot"></span>Мест нет</span>`;
                     } else {
-                        statusHtml = '<span class="status-check">🟠 Проверка...</span>';
+                        badgeHtml = `<span class="badge badge-check"><span class="badge-dot"></span>Проверка</span>`;
                     }
 
                     card.innerHTML = `
                         ${iconHtml}
                         <div class="item-content">
                             <div class="item-title">${app.name}</div>
-                            <div class="item-subtitle">${statusHtml} • Tap to delete</div>
+                            <div class="item-subtitle">${badgeHtml}<span>·</span><span>Tap to remove</span></div>
                         </div>
+                        <svg class="item-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
                     `;
-                    
-                    card.onclick = function() {
+
+                    card.onclick = function () {
                         tg.HapticFeedback.impactOccurred('light');
-                        tg.showConfirm(`Удалить отслеживание слотов для ${app.name}?`, async function(confirmed) {
-                            if(confirmed) {
+                        tg.showConfirm(`Удалить отслеживание для ${app.name}?`, async function (confirmed) {
+                            if (confirmed) {
                                 try {
                                     await fetch('/api/delete_link', {
                                         method: 'POST',
                                         headers: {'Content-Type': 'application/json'},
-                                        body: JSON.stringify({uid: uid, url: app.url})
+                                        body: JSON.stringify({uid, url: app.url})
                                     });
-                                    card.remove();
+                                    card.style.transition = 'opacity 0.2s, transform 0.2s';
+                                    card.style.opacity = '0';
+                                    card.style.transform = 'translateX(16px)';
+                                    setTimeout(() => card.remove(), 200);
                                     tg.HapticFeedback.notificationOccurred('success');
-                                } catch(e) {
+                                } catch (e) {
                                     tg.showAlert('Ошибка удаления');
                                 }
                             }
@@ -224,10 +674,10 @@
                     list.appendChild(card);
                 });
             } catch (e) {
-                list.innerHTML += '<div class="list-item"><div class="item-content"><div class="item-title" style="color: #ff375f;">Ошибка загрузки</div></div></div>';
+                list.innerHTML += `<div class="list-item"><div class="item-content"><div class="item-title" style="color:var(--red)">Ошибка загрузки</div></div></div>`;
             }
         }
-        
+
         loadLinks();
     </script>
 </body>
