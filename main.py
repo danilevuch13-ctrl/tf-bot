@@ -51,13 +51,11 @@ def check_testflight_slot(url):
     try:
         response = requests.get(no_cache_url, headers=HEADERS, timeout=10)
         if response.status_code == 200:
-            text = response.text.lower() # Переводим все в нижний регистр для надежности
+            text = response.text.lower()
             
-            # Сначала проверяем признаки того, что мест нет
             if '"status":"full"' in text or '"status":"closed"' in text or 'beta is full' in text or 'not accepting' in text:
                 return "FULL"
             
-            # Затем проверяем, что места есть
             if '"status":"accepting"' in text or 'join the' in text or 'start testing' in text:
                 return "OPEN"
                 
@@ -117,7 +115,7 @@ def monitor_logic():
                         except: pass
                     cur.execute("UPDATE links SET last_status = %s WHERE url = %s", (current_status, url))
                 
-                time.sleep(2)
+                time.sleep(1)
                 
             conn.commit()
             cur.close()
@@ -126,7 +124,7 @@ def monitor_logic():
         except Exception as e:
             print(f"Критическая ошибка мониторинга: {e}")
             
-        time.sleep(15)
+        time.sleep(5)
 
 def get_settings_keyboard(chat_id):
     conn = get_db_connection(); cur = conn.cursor()
