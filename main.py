@@ -5,12 +5,13 @@ import threading
 import os
 import re
 import psycopg2
-from flask import Flask
+from flask import Flask, render_template
 from telebot import types
 
 # --- КОНФИГУРАЦИЯ ---
 TOKEN = '8626634626:AAHLC6m4k9sFvHGvKzxJrVkqcAqqH6hhNoA'
 DATABASE_URL = 'postgresql://tf_database_mepp_user:6QragyDz33MtEr0LyWr0OZ3izG9Mac9x@dpg-d7qcqubeo5us73fcmdfg-a/tf_database_mepp'
+RENDER_URL = 'https://tf-bot.onrender.com/'
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -42,7 +43,7 @@ def init_db():
     cur.close()
     conn.close()
 
-# --- ЛОГИКА ПРОВЕРКИ ---
+# --- ЛОГИКА ПРОВЕРКИ TESTFLIGHT ---
 def check_testflight_slot(url):
     clean_url = url.split('?')[0]
     no_cache_url = f"{clean_url}?t={int(time.time() * 1000)}"
@@ -58,8 +59,7 @@ def check_testflight_slot(url):
 def monitor_logic():
     while True:
         try:
-            conn = get_db_connection()
-            cur = conn.cursor()
+            conn = get_db_connection(); cur = conn.cursor()
             cur.execute("SELECT DISTINCT url FROM links")
             urls = [row[0] for row in cur.fetchall()]
             for url in urls:
@@ -72,9 +72,8 @@ def monitor_logic():
                 """, (url,))
                 records = cur.fetchall()
                 if not records: continue
-                old_status = records[0][1]
                 
-                if current_status != old_status:
+                if current_status != records[0][1]:
                     for chat_id, _, silent, notify_full in records:
                         try:
                             if current_status == "OPEN":
@@ -83,11 +82,9 @@ def monitor_logic():
                                 bot.send_message(chat_id, f"🔴 Места закончились для:\n{url}", disable_notification=silent)
                         except: pass
                     cur.execute("UPDATE links SET last_status = %s WHERE url = %s", (current_status, url))
-            conn.commit()
-            cur.close()
-            conn.close()
+            conn.commit(); cur.close(); conn.close()
         except Exception as e: print(f"Monitor error: {e}")
-        time.sleep(1)
+        time.sleep(5) # Задержка 5 секунд для стабильности
 
 # --- КЛАВИАТУРЫ ---
 def get_settings_keyboard(chat_id):
@@ -99,9 +96,10 @@ def get_settings_keyboard(chat_id):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton(f"🔔 Звук: {'ВЫКЛ' if silent else 'ВКЛ'}", callback_data="toggle_silent"))
     markup.add(types.InlineKeyboardButton(f"🔴 Уведомления о FULL: {'ВКЛ' if full else 'ВЫКЛ'}", callback_data="toggle_full"))
+    markup.add(types.InlineKeyboardButton("📱 Открыть Mini App", web_app=types.WebAppInfo(RENDER_URL)))
     return markup
 
-# --- КОМАНДЫ ---
+# --- КОМАНДЫ БОТА ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     uid = message.chat.id
@@ -112,8 +110,7 @@ def send_welcome(message):
     
     text = (f"👋 <b><a href='https://t.me/NuviraByteCore'>NuviraByteCore</a> TestFlight Tracker</b>\n\n"
             f"Пришли ссылку для отслеживания.\n"
-            f"⚙️ Настройки уведомлений:")
-    
+            f"⚙️ Настройки и Mini App:")
     bot.send_message(uid, text, parse_mode='html', reply_markup=get_settings_keyboard(uid), disable_web_page_preview=True)
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -149,8 +146,7 @@ def delete_link(message):
         cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (message.chat.id, target))
         conn.commit(); cur.close(); conn.close()
         bot.reply_to(message, "🗑 Удалено.")
-    else:
-        bot.reply_to(message, "❌ Ссылка не найдена.")
+    else: bot.reply_to(message, "❌ Ссылка не найдена.")
 
 @bot.message_handler(commands=['danyaxap'])
 def admin_stats(message):
@@ -172,13 +168,18 @@ def add_link(message):
         except: bot.reply_to(message, "⚠️ Уже в списке.")
         cur.close(); conn.close()
 
-# --- ЗАПУСК ---
-app = Flask(__name__)
+# --- ВЕБ-СЕРВЕР FLASK ---
+app = Flask(__name__, template_folder='templates')
+
 @app.route('/')
-def home(): return "OK", 200
+def home():
+    return render_template('index.html')
 
 if __name__ == '__main__':
     init_db()
+    # Запуск Flask в отдельном потоке
     threading.Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))), daemon=True).start()
+    # Запуск мониторинга в отдельном потоке
     threading.Thread(target=monitor_logic, daemon=True).start()
+    # Основной цикл бота
     bot.infinity_polling()
