@@ -64,6 +64,10 @@
         .btn-cancel { background: #38383a; color: #fff; }
         .btn-save { background: var(--accent-color); color: #fff; }
         .btn:active { opacity: 0.8; }
+        
+        .status-open { color: #32d74b; font-weight: 500; } /* Зеленый iOS */
+        .status-full { color: #ff453a; font-weight: 500; } /* Красный iOS */
+        .status-check { color: #ff9f0a; font-weight: 500; } /* Оранжевый iOS */
     </style>
 </head>
 <body>
@@ -180,11 +184,21 @@
                         iconHtml = `<img src="${app.icon}" class="item-icon">`;
                     }
 
+                    // Логика вывода статуса
+                    let statusHtml = '';
+                    if (app.status === 'OPEN') {
+                        statusHtml = '<span class="status-open">🟢 Места есть</span>';
+                    } else if (app.status === 'FULL') {
+                        statusHtml = '<span class="status-full">🔴 Мест нет</span>';
+                    } else {
+                        statusHtml = '<span class="status-check">🟠 Проверка...</span>';
+                    }
+
                     card.innerHTML = `
                         ${iconHtml}
                         <div class="item-content">
                             <div class="item-title">${app.name}</div>
-                            <div class="item-subtitle">Tap to delete • Active</div>
+                            <div class="item-subtitle">${statusHtml} • Tap to delete</div>
                         </div>
                     `;
                     
