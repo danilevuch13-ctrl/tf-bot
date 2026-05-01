@@ -54,7 +54,6 @@
             display: flex; align-items: center; justify-content: center;
         }
 
-        /* Стили модального окна добавления */
         .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
         .modal-content { background: #242426; width: 100%; border-radius: 14px; padding: 20px; box-sizing: border-box; }
         .modal-content h3 { margin-top: 0; margin-bottom: 15px; font-size: 18px; text-align: center; font-weight: 600; }
@@ -83,7 +82,6 @@
         </div>
     </div>
 
-    <!-- Модальное окно -->
     <div id="add-modal" class="modal">
         <div class="modal-content">
             <h3>Новая ссылка</h3>
@@ -131,9 +129,9 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    tg.HapticFeedback.impactOccurred('success');
+                    tg.HapticFeedback.notificationOccurred('success');
                     closeModal();
-                    loadLinks(); // Перезагружаем список
+                    loadLinks(); 
                 } else {
                     tg.showAlert(data.error);
                 }
@@ -148,7 +146,6 @@
             const uid = tg.initDataUnsafe.user?.id;
             const list = document.getElementById('app-list');
             
-            // Базовая кнопка добавления всегда сверху
             list.innerHTML = `
                 <div class="list-item add-link" onclick="openAddModal()">
                     <div class="add-icon-box">
@@ -191,7 +188,6 @@
                         </div>
                     `;
                     
-                    // Логика удаления
                     card.onclick = function() {
                         tg.HapticFeedback.impactOccurred('light');
                         tg.showConfirm(`Удалить отслеживание слотов для ${app.name}?`, async function(confirmed) {
@@ -203,7 +199,7 @@
                                         body: JSON.stringify({uid: uid, url: app.url})
                                     });
                                     card.remove();
-                                    tg.HapticFeedback.impactOccurred('success');
+                                    tg.HapticFeedback.notificationOccurred('success');
                                 } catch(e) {
                                     tg.showAlert('Ошибка удаления');
                                 }
