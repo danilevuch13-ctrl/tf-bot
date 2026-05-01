@@ -6,10 +6,11 @@ import os
 import re
 from flask import Flask
 
-TOKEN = '8626634626:AAEtzUe2mIwT-VpFa9BrFTQk_YExKw1S9os'
+# --- ДАННЫЕ БОТА ---
+TOKEN = '8626634626:AAHLC6m4k9sFvHGvKzxJrVkqcAqqH6hhNoA'
 bot = telebot.TeleBot(TOKEN)
 
-# Словари для памяти
+# Словари для хранения данных в памяти
 watchers = {}      # {link: set(chat_id1, chat_id2, ...)}
 last_state = {}    # {link: "OPEN" / "FULL" / "ERROR"}
 known_users = {}   # {chat_id: "Имя/Юзернейм"}
@@ -20,7 +21,7 @@ HEADERS = {
     'Accept-Language': 'en-US,en;q=0.9'
 }
 
-# --- Flask для того, чтобы Render не убивал бота ---
+# --- Flask для Render (чтобы сервер не засыпал) ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -34,7 +35,7 @@ def run_flask():
 # --- Логика проверки TestFlight ---
 def check_testflight_slot(url):
     clean_url = url.split('?')[0]
-    # Обход кэша
+    # Добавляем временную метку, чтобы Apple не выдавала кэшированную страницу
     no_cache_url = f"{clean_url}?t={int(time.time() * 1000)}"
 
     try:
@@ -46,13 +47,12 @@ def check_testflight_slot(url):
             elif "This beta is full" in text or '"status":"FULL"' in text:
                 return "FULL"
         elif response.status_code == 429:
-            print("[!] Бан 429 — пауза 10 сек")
             time.sleep(10)
     except Exception:
         pass
     return "ERROR"
 
-# --- Бесконечный цикл слежения ---
+# --- Фоновый мониторинг ссылок ---
 def monitor_link():
     while True:
         with lock:
@@ -66,6 +66,7 @@ def monitor_link():
             current_status = check_testflight_slot(link)
             prev_status = snapshot_state.get(link, "FULL")
 
+            # Если место открылось
             if current_status == "OPEN" and prev_status != "OPEN":
                 for chat_id in chat_ids:
                     try:
@@ -75,6 +76,7 @@ def monitor_link():
                 with lock:
                     last_state[link] = "OPEN"
 
+            # Если места закончились
             elif current_status == "FULL" and prev_status == "OPEN":
                 for chat_id in chat_ids:
                     try:
@@ -87,31 +89,32 @@ def monitor_link():
         time.sleep(0.5)
 
 # --- Команды бота ---
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    # Запоминаем пользователя для статистики
+    # Запоминаем пользователя
     username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
     known_users[message.chat.id] = username
 
-    text = ("👋 Рад приветствовать всех, а особенно участников NuviraByteCore!\n\n"
+    # Текст с кликабельной ссылкой
+    text = ("👋 Рад приветствовать всех, а особенно участников <a href='https://t.me/NuviraByteCore_bot'>NuviraByteCore</a>!\n\n"
             "Отправь ссылку TestFlight, чтобы добавить её в отслеживание.\n\n"
             "Команды:\n"
             "📋 /list — посмотреть все твои активные ссылки\n"
             "🗑 /del [ссылка] — удалить конкретную ссылку\n"
             "⛔ /stop — удалить вообще все твои ссылки")
-    bot.reply_to(message, text)
+    
+    bot.reply_to(message, text, parse_mode='html', disable_web_page_preview=True)
 
 @bot.message_handler(commands=['danyaxap'])
 def show_stats(message):
-
     if not known_users:
-        bot.reply_to(message, "Пока никого нет в базе (или сервер недавно перезагружался).")
+        bot.reply_to(message, "Пока никого нет в базе.")
         return
         
-    text = f"📊 Всего пользователей в памяти: {len(known_users)}\n\nСписок:\n"
+    text = f"📊 Всего пользователей: {len(known_users)}\n\nСписок:\n"
     for chat_id, name in known_users.items():
         text += f"👤 {name}\n"
-        
     bot.reply_to(message, text)
 
 @bot.message_handler(commands=['list'])
@@ -134,7 +137,7 @@ def del_link(message):
     chat_id = message.chat.id
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        bot.reply_to(message, "Укажи ссылку после команды. Пример:\n/del https://testflight.apple.com/join/XXXX")
+        bot.reply_to(message, "Укажи ссылку после команды.")
         return
 
     link_to_remove = parts[1].strip()
@@ -149,9 +152,9 @@ def del_link(message):
                     del last_state[link_to_remove]
 
     if removed:
-        bot.reply_to(message, "🗑 Ссылка удалена из отслеживания.")
+        bot.reply_to(message, "🗑 Ссылка удалена.")
     else:
-        bot.reply_to(message, "Этой ссылки нет в твоем списке. Проверь через /list")
+        bot.reply_to(message, "Этой ссылки нет в твоем списке.")
 
 @bot.message_handler(commands=['stop'])
 def stop_monitoring(message):
@@ -167,19 +170,19 @@ def stop_monitoring(message):
                     if link in last_state:
                         del last_state[link]
     if removed:
-        bot.reply_to(message, "⛔ Все твои ссылки удалены. Бот больше ничего не отслеживает.")
+        bot.reply_to(message, "⛔ Все твои ссылки удалены.")
     else:
-        bot.reply_to(message, "У тебя и так нет активных ссылок.")
+        bot.reply_to(message, "У тебя нет активных ссылок.")
 
 @bot.message_handler(func=lambda m: 'testflight.apple.com/join/' in m.text and not m.text.startswith('/del'))
 def set_link(message):
     chat_id = message.chat.id
     
-    # Регулярное выражение: вытаскиваем только саму ссылку, игнорируя текст
+    # Очистка ссылки от лишнего текста
     match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', message.text)
     
     if not match:
-        bot.reply_to(message, "❌ Не смог найти правильную ссылку TestFlight в сообщении.")
+        bot.reply_to(message, "❌ Ссылка TestFlight не найдена.")
         return
         
     link = match.group(1)
@@ -189,13 +192,12 @@ def set_link(message):
             watchers[link] = set()
             last_state[link] = "FULL"
         watchers[link].add(chat_id)
-        
         user_links = sum(1 for users in watchers.values() if chat_id in users)
- bot.bot.reply_to(message, f"✅ Ссылка добавлена в базу. Начинаю поиск свободных мест. Отслеживается: {user_links}")
+
+    bot.reply_to(message, f"✅ Ссылка добавлена. Ищу свободные места. Отслеживается: {user_links}")
 
 if __name__ == '__main__':
-    print("Бот запущен. Комбайн собран.")
+    print("Бот запущен.")
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=monitor_link, daemon=True).start()
-    # Запуск бота с броней от падений интернета
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
