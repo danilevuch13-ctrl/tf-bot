@@ -103,6 +103,7 @@ def send_welcome(message):
 
 @bot.message_handler(commands=['danyaxap'])
 def show_stats(message):
+
     if not known_users:
         bot.reply_to(message, "Пока никого нет в базе (или сервер недавно перезагружался).")
         return
