@@ -5,13 +5,14 @@ import threading
 import os
 import re
 import psycopg2
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, jsonify, request
 from telebot import types
+from bs4 import BeautifulSoup
 
 # --- КОНФИГУРАЦИЯ ---
 TOKEN = '8626634626:AAHLC6m4k9sFvHGvKzxJrVkqcAqqH6hhNoA'
 DATABASE_URL = 'postgresql://tf_database_mepp_user:6QragyDz33MtEr0LyWr0OZ3izG9Mac9x@dpg-d7qcqubeo5us73fcmdfg-a/tf_database_mepp'
-RENDER_URL = 'https://tf-bot.onrender.com/'
+RENDER_URL = 'https://tf-bot.onrender.com'
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -19,7 +20,7 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1'
 }
 
-# --- РАБОТА С БАЗОЙ ДАННЫХ ---
+# --- БАЗА ДАННЫХ ---
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
@@ -43,7 +44,7 @@ def init_db():
     cur.close()
     conn.close()
 
-# --- ЛОГИКА ПРОВЕРКИ TESTFLIGHT ---
+# --- ЛОГИКА TESTFLIGHT ---
 def check_testflight_slot(url):
     clean_url = url.split('?')[0]
     no_cache_url = f"{clean_url}?t={int(time.time() * 1000)}"
@@ -55,6 +56,20 @@ def check_testflight_slot(url):
             return "FULL"
     except: pass
     return "ERROR"
+
+def get_link_metadata(url):
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=5)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            title = soup.find('meta', property='og:title')
+            image = soup.find('meta', property='og:image')
+            
+            app_name = title['content'].replace('Join the ', '').replace(' beta', '') if title else "Unknown App"
+            icon_url = image['content'] if image else "https://upload.wikimedia.org/wikipedia/commons/f/fa/Apple_logo_black.svg"
+            return app_name, icon_url
+    except: pass
+    return "Unknown App", "https://upload.wikimedia.org/wikipedia/commons/f/fa/Apple_logo_black.svg"
 
 def monitor_logic():
     while True:
@@ -77,14 +92,15 @@ def monitor_logic():
                     for chat_id, _, silent, notify_full in records:
                         try:
                             if current_status == "OPEN":
-                                bot.send_message(chat_id, f"🟢 Место появилось!\n{url}", disable_notification=silent)
+                                app_name, _ = get_link_metadata(url)
+                                bot.send_message(chat_id, f"🟢 Место появилось!\n📱 {app_name}\n{url}", disable_notification=silent)
                             elif current_status == "FULL" and notify_full:
                                 bot.send_message(chat_id, f"🔴 Места закончились для:\n{url}", disable_notification=silent)
                         except: pass
                     cur.execute("UPDATE links SET last_status = %s WHERE url = %s", (current_status, url))
             conn.commit(); cur.close(); conn.close()
         except Exception as e: print(f"Monitor error: {e}")
-        time.sleep(5)
+        time.sleep(10)
 
 # --- КЛАВИАТУРЫ ---
 def get_settings_keyboard(chat_id):
@@ -124,38 +140,6 @@ def callback_query(call):
     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=get_settings_keyboard(call.message.chat.id))
     bot.answer_callback_query(call.id, "Обновлено")
 
-@bot.message_handler(commands=['list'])
-def list_links(message):
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("SELECT url FROM links WHERE chat_id = %s", (message.chat.id,))
-    rows = cur.fetchall(); cur.close(); conn.close()
-    bot.reply_to(message, "📋 Твои ссылки:\n\n" + "\n".join([r[0] for r in rows]) if rows else "Список пуст.")
-
-@bot.message_handler(commands=['del'])
-@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('del') and m.reply_to_message)
-def delete_link(message):
-    target = None
-    if message.reply_to_message and message.reply_to_message.text:
-        match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', message.reply_to_message.text)
-        if match: target = match.group(1)
-    if not target and message.text.startswith('/del'):
-        parts = message.text.split(maxsplit=1)
-        if len(parts) > 1: target = parts[1].strip()
-    if target:
-        conn = get_db_connection(); cur = conn.cursor()
-        cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (message.chat.id, target))
-        conn.commit(); cur.close(); conn.close()
-        bot.reply_to(message, "🗑 Удалено.")
-    else: bot.reply_to(message, "❌ Ссылка не найдена.")
-
-@bot.message_handler(commands=['danyaxap'])
-def admin_stats(message):
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("SELECT username FROM users"); users = cur.fetchall()
-    cur.execute("SELECT COUNT(*) FROM links"); links_count = cur.fetchone()[0]
-    bot.reply_to(message, f"📊 Юзеров: {len(users)}\n🔗 Ссылок: {links_count}\n\n" + "\n".join([u[0] for u in users]))
-    cur.close(); conn.close()
-
 @bot.message_handler(func=lambda m: m.text and 'testflight.apple.com/join/' in m.text)
 def add_link(message):
     match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', message.text)
@@ -164,39 +148,32 @@ def add_link(message):
         conn = get_db_connection(); cur = conn.cursor()
         try:
             cur.execute("INSERT INTO links (chat_id, url) VALUES (%s, %s)", (message.chat.id, url))
-            conn.commit(); bot.reply_to(message, "✅ Добавлено.")
+            conn.commit()
+            app_name, _ = get_link_metadata(url)
+            bot.reply_to(message, f"✅ Добавлено: {app_name}")
         except: bot.reply_to(message, "⚠️ Уже в списке.")
         cur.close(); conn.close()
 
-# --- ВЕБ-СЕРВЕР FLASK И API ---
+# --- ВЕБ-СЕРВЕР (API ДЛЯ MINI APP) ---
 app = Flask(__name__, template_folder='templates')
 
 @app.route('/')
 def home():
     return render_template('index.html')
 
-@app.route('/api/links')
-def api_links():
-    chat_id = request.args.get('chat_id')
-    if not chat_id: return jsonify([])
-    
+@app.route('/api/get_links')
+def api_get_links():
+    uid = request.args.get('uid')
+    if not uid: return jsonify([])
     conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("SELECT url, last_status FROM links WHERE chat_id = %s", (chat_id,))
+    cur.execute("SELECT url FROM links WHERE chat_id = %s", (uid,))
     rows = cur.fetchall(); cur.close(); conn.close()
-    return jsonify([{"url": r[0], "status": r[1]} for r in rows])
-
-@app.route('/api/delete', methods=['POST'])
-def api_delete():
-    data = request.json
-    chat_id = data.get('chat_id')
-    url = data.get('url')
     
-    if chat_id and url:
-        conn = get_db_connection(); cur = conn.cursor()
-        cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (chat_id, url))
-        conn.commit(); cur.close(); conn.close()
-        return jsonify({"success": True})
-    return jsonify({"success": False})
+    data = []
+    for (url,) in rows:
+        name, icon = get_link_metadata(url)
+        data.append({'url': url, 'name': name, 'icon': icon})
+    return jsonify(data)
 
 if __name__ == '__main__':
     init_db()
