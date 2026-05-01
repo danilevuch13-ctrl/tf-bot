@@ -17,7 +17,9 @@ RENDER_URL = 'https://tf-bot.onrender.com'
 bot = telebot.TeleBot(TOKEN)
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1'
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
 }
 
 def get_db_connection():
@@ -36,7 +38,7 @@ def init_db():
         id SERIAL PRIMARY KEY,
         chat_id BIGINT,
         url TEXT,
-        last_status TEXT DEFAULT 'FULL',
+        last_status TEXT DEFAULT 'CHECKING',
         UNIQUE(chat_id, url)
     )''')
     conn.commit()
@@ -49,9 +51,12 @@ def check_testflight_slot(url):
     try:
         response = requests.get(no_cache_url, headers=HEADERS, timeout=10)
         if response.status_code == 200:
-            if "Join the Beta" in response.text or '"status":"ACCEPTING"' in response.text:
+            # Ищем системный статус Apple в JSON-коде страницы
+            if re.search(r'"status"\s*:\s*"ACCEPTING"', response.text) or "Join the Beta" in response.text:
                 return "OPEN"
-            return "FULL"
+            elif re.search(r'"status"\s*:\s*"(FULL|CLOSED)"', response.text) or "This beta is full" in response.text:
+                return "FULL"
+            return "ERROR" # Если страница отдала 200, но статусов нет (капча/бан)
     except: pass
     return "ERROR"
 
@@ -72,11 +77,19 @@ def get_link_metadata(url):
 def monitor_logic():
     while True:
         try:
-            conn = get_db_connection(); cur = conn.cursor()
+            conn = get_db_connection()
+            cur = conn.cursor()
             cur.execute("SELECT DISTINCT url FROM links")
             urls = [row[0] for row in cur.fetchall()]
+            
             for url in urls:
                 current_status = check_testflight_slot(url)
+                
+                if current_status == "ERROR":
+                    print(f"⚠️ Ошибка проверки или бан IP Apple для: {url}")
+                    time.sleep(3)
+                    continue 
+                    
                 cur.execute("""
                     SELECT l.chat_id, l.last_status, u.silent_mode, u.notify_full 
                     FROM links l 
@@ -96,9 +109,17 @@ def monitor_logic():
                                 bot.send_message(chat_id, f"🔴 Места закончились для:\n{url}", disable_notification=silent)
                         except: pass
                     cur.execute("UPDATE links SET last_status = %s WHERE url = %s", (current_status, url))
-            conn.commit(); cur.close(); conn.close()
-        except Exception as e: print(f"Monitor error: {e}")
-        time.sleep(10)
+                
+                time.sleep(2)
+                
+            conn.commit()
+            cur.close()
+            conn.close()
+            
+        except Exception as e:
+            print(f"Критическая ошибка мониторинга: {e}")
+            
+        time.sleep(15)
 
 def get_settings_keyboard(chat_id):
     conn = get_db_connection(); cur = conn.cursor()
@@ -175,7 +196,8 @@ def add_link(message):
         url = match.group(1)
         conn = get_db_connection(); cur = conn.cursor()
         try:
-            cur.execute("INSERT INTO links (chat_id, url) VALUES (%s, %s)", (message.chat.id, url))
+            # Принудительно ставим статус CHECKING при добавлении
+            cur.execute("INSERT INTO links (chat_id, url, last_status) VALUES (%s, %s, 'CHECKING')", (message.chat.id, url))
             conn.commit()
             app_name, _ = get_link_metadata(url)
             bot.reply_to(message, f"✅ Добавлено: {app_name}")
@@ -194,7 +216,6 @@ def api_get_links():
     uid = request.args.get('uid')
     if not uid: return jsonify([])
     conn = get_db_connection(); cur = conn.cursor()
-    # ТЕПЕРЬ ЗАБИРАЕМ И СТАТУС ССЫЛКИ
     cur.execute("SELECT url, last_status FROM links WHERE chat_id = %s", (uid,))
     rows = cur.fetchall(); cur.close(); conn.close()
     
@@ -218,7 +239,8 @@ def api_add_link():
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        cur.execute("INSERT INTO links (chat_id, url) VALUES (%s, %s)", (uid, url))
+        # Принудительно ставим статус CHECKING при добавлении
+        cur.execute("INSERT INTO links (chat_id, url, last_status) VALUES (%s, %s, 'CHECKING')", (uid, url))
         conn.commit()
         cur.close(); conn.close()
         return jsonify({'success': True})
