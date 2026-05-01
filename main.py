@@ -20,7 +20,6 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1'
 }
 
-# --- БАЗА ДАННЫХ ---
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
@@ -44,7 +43,6 @@ def init_db():
     cur.close()
     conn.close()
 
-# --- ЛОГИКА TESTFLIGHT ---
 def check_testflight_slot(url):
     clean_url = url.split('?')[0]
     no_cache_url = f"{clean_url}?t={int(time.time() * 1000)}"
@@ -66,10 +64,10 @@ def get_link_metadata(url):
             image = soup.find('meta', property='og:image')
             
             app_name = title['content'].replace('Join the ', '').replace(' beta', '') if title else "Unknown App"
-            icon_url = image['content'] if image else "https://upload.wikimedia.org/wikipedia/commons/f/fa/Apple_logo_black.svg"
+            icon_url = image['content'] if image else "https://developer.apple.com/assets/elements/icons/testflight/testflight-128x128_2x.png"
             return app_name, icon_url
     except: pass
-    return "Unknown App", "https://upload.wikimedia.org/wikipedia/commons/f/fa/Apple_logo_black.svg"
+    return "Unknown App", "https://developer.apple.com/assets/elements/icons/testflight/testflight-128x128_2x.png"
 
 def monitor_logic():
     while True:
@@ -102,7 +100,6 @@ def monitor_logic():
         except Exception as e: print(f"Monitor error: {e}")
         time.sleep(10)
 
-# --- КЛАВИАТУРЫ ---
 def get_settings_keyboard(chat_id):
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("SELECT silent_mode, notify_full FROM users WHERE chat_id = %s", (chat_id,))
@@ -115,7 +112,6 @@ def get_settings_keyboard(chat_id):
     markup.add(types.InlineKeyboardButton("📱 Открыть Mini App", web_app=types.WebAppInfo(RENDER_URL)))
     return markup
 
-# --- КОМАНДЫ БОТА ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     uid = message.chat.id
@@ -174,6 +170,43 @@ def api_get_links():
         name, icon = get_link_metadata(url)
         data.append({'url': url, 'name': name, 'icon': icon})
     return jsonify(data)
+
+@app.route('/api/add_link', methods=['POST'])
+def api_add_link():
+    data = request.json
+    uid = data.get('uid')
+    url_text = data.get('url', '')
+    
+    match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', url_text)
+    if not match or not uid:
+        return jsonify({'success': False, 'error': 'Некорректная ссылка TestFlight'})
+        
+    url = match.group(1)
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("INSERT INTO links (chat_id, url) VALUES (%s, %s)", (uid, url))
+        conn.commit()
+        cur.close(); conn.close()
+        return jsonify({'success': True})
+    except Exception:
+        cur.close(); conn.close()
+        return jsonify({'success': False, 'error': 'Эта ссылка уже есть в твоем списке'})
+
+@app.route('/api/delete_link', methods=['POST'])
+def api_delete_link():
+    data = request.json
+    uid = data.get('uid')
+    url = data.get('url')
+    if not uid or not url:
+        return jsonify({'success': False})
+        
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (uid, url))
+    conn.commit()
+    cur.close(); conn.close()
+    return jsonify({'success': True})
 
 if __name__ == '__main__':
     init_db()
