@@ -10,10 +10,9 @@ from telebot import types
 
 # --- КОНФИГУРАЦИЯ ---
 TOKEN = '8626634626:AAHLC6m4k9sFvHGvKzxJrVkqcAqqH6hhNoA'
-DATABASE_URL = 'postgresql://postgres:29118041393Aa@db.hdjvfiolfbghpvesuumm.supabase.co:5432/postgres'
+DATABASE_URL = 'postgresql://tf_database_mepp_user:6QragyDz33MtEr0LyWr0OZ3izG9Mac9x@dpg-d7qcqubeo5us73fcmdfg-a/tf_database_mepp'
 
 bot = telebot.TeleBot(TOKEN)
-lock = threading.Lock()
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1'
@@ -65,10 +64,16 @@ def monitor_logic():
             urls = [row[0] for row in cur.fetchall()]
             for url in urls:
                 current_status = check_testflight_slot(url)
-                cur.execute("SELECT l.chat_id, l.last_status, u.silent_mode, u.notify_full FROM links l JOIN users u ON l.chat_id = u.chat_id WHERE l.url = %s", (url,))
+                cur.execute("""
+                    SELECT l.chat_id, l.last_status, u.silent_mode, u.notify_full 
+                    FROM links l 
+                    JOIN users u ON l.chat_id = u.chat_id 
+                    WHERE l.url = %s
+                """, (url,))
                 records = cur.fetchall()
                 if not records: continue
                 old_status = records[0][1]
+                
                 if current_status != old_status:
                     for chat_id, _, silent, notify_full in records:
                         try:
@@ -104,7 +109,7 @@ def send_welcome(message):
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("INSERT INTO users (chat_id, username) VALUES (%s, %s) ON CONFLICT (chat_id) DO UPDATE SET username = %s", (uid, name, name))
     conn.commit(); cur.close(); conn.close()
-    text = ("👋 Рад видеть тебя в <a href='https://t.me/NuviraByteCore_bot'>NuviraByteCore</a>!\n\nПришли ссылку TestFlight для начала.\n\n⚙️ Настройки:")
+    text = ("👋 <b>NuviraByteCore TestFlight Tracker</b>\n\nПришли ссылку для отслеживания.\n⚙️ Настройки уведомлений:")
     bot.send_message(uid, text, parse_mode='html', reply_markup=get_settings_keyboard(uid), disable_web_page_preview=True)
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -116,7 +121,7 @@ def callback_query(call):
         cur.execute("UPDATE users SET notify_full = NOT notify_full WHERE chat_id = %s", (call.message.chat.id,))
     conn.commit(); cur.close(); conn.close()
     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=get_settings_keyboard(call.message.chat.id))
-    bot.answer_callback_query(call.id, "Настройки обновлены")
+    bot.answer_callback_query(call.id, "Обновлено")
 
 @bot.message_handler(commands=['list'])
 def list_links(message):
@@ -163,6 +168,7 @@ def add_link(message):
         except: bot.reply_to(message, "⚠️ Уже в списке.")
         cur.close(); conn.close()
 
+# --- ЗАПУСК ---
 app = Flask(__name__)
 @app.route('/')
 def home(): return "OK", 200
