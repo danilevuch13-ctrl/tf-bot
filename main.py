@@ -3,15 +3,16 @@ import requests
 import time
 import threading
 import os
+import re
 from flask import Flask
 
-TOKEN = '8626634626:AAF_uOxpveBA83EP6USBcl0QQfJLwmjOiLA'
+TOKEN = '8626634626:AAEJQmGBiOV7wl_CSOssozaEckjHRJOJE-E'
 bot = telebot.TeleBot(TOKEN)
 
-# {link: set(chat_id1, chat_id2, ...)}
-watchers = {}
-# {link: "OPEN" / "FULL" / "ERROR"}
-last_state = {}
+# Словари для памяти
+watchers = {}      # {link: set(chat_id1, chat_id2, ...)}
+last_state = {}    # {link: "OPEN" / "FULL" / "ERROR"}
+known_users = {}   # {chat_id: "Имя/Юзернейм"}
 lock = threading.Lock()
 
 HEADERS = {
@@ -19,7 +20,7 @@ HEADERS = {
     'Accept-Language': 'en-US,en;q=0.9'
 }
 
-# --- Flask для Render ---
+# --- Flask для того, чтобы Render не убивал бота ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -30,9 +31,10 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# --- Проверка слота ---
+# --- Логика проверки TestFlight ---
 def check_testflight_slot(url):
     clean_url = url.split('?')[0]
+    # Обход кэша
     no_cache_url = f"{clean_url}?t={int(time.time() * 1000)}"
 
     try:
@@ -50,6 +52,7 @@ def check_testflight_slot(url):
         pass
     return "ERROR"
 
+# --- Бесконечный цикл слежения ---
 def monitor_link():
     while True:
         with lock:
@@ -83,13 +86,31 @@ def monitor_link():
 
         time.sleep(0.5)
 
+# --- Команды бота ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    text = ("Отправь ссылку TestFlight, чтобы добавить её в отслеживание.\n\n"
+    # Запоминаем пользователя для статистики
+    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
+    known_users[message.chat.id] = username
+
+    text = ("👋 Рад приветствовать всех, а особенно участников NuviraByteCore!\n\n"
+            "Отправь ссылку TestFlight, чтобы добавить её в отслеживание.\n\n"
             "Команды:\n"
             "📋 /list — посмотреть все твои активные ссылки\n"
             "🗑 /del [ссылка] — удалить конкретную ссылку\n"
             "⛔ /stop — удалить вообще все твои ссылки")
+    bot.reply_to(message, text)
+
+@bot.message_handler(commands=['stats'])
+def show_stats(message):
+    if not known_users:
+        bot.reply_to(message, "Пока никого нет в базе (или сервер недавно перезагружался).")
+        return
+        
+    text = f"📊 Всего пользователей в памяти: {len(known_users)}\n\nСписок:\n"
+    for chat_id, name in known_users.items():
+        text += f"👤 {name}\n"
+        
     bot.reply_to(message, text)
 
 @bot.message_handler(commands=['list'])
@@ -152,7 +173,15 @@ def stop_monitoring(message):
 @bot.message_handler(func=lambda m: 'testflight.apple.com/join/' in m.text and not m.text.startswith('/del'))
 def set_link(message):
     chat_id = message.chat.id
-    link = message.text.strip()
+    
+    # Регулярное выражение: вытаскиваем только саму ссылку, игнорируя текст
+    match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', message.text)
+    
+    if not match:
+        bot.reply_to(message, "❌ Не смог найти правильную ссылку TestFlight в сообщении.")
+        return
+        
+    link = match.group(1)
 
     with lock:
         if link not in watchers:
@@ -160,13 +189,13 @@ def set_link(message):
             last_state[link] = "FULL"
         watchers[link].add(chat_id)
         
-        # Считаем, сколько ссылок отслеживает именно этот пользователь
         user_links = sum(1 for users in watchers.values() if chat_id in users)
 
-    bot.reply_to(message, f"✅ Добавлено! Теперь ты отслеживаешь {user_links} прилож. (проверка каждые 0.5 сек).")
+    bot.reply_to(message, f"✅ Вытащил чистую ссылку! Теперь отслеживаешь {user_links} прилож.")
 
 if __name__ == '__main__':
-    print("Бот запущен.")
+    print("Бот запущен. Комбайн собран.")
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=monitor_link, daemon=True).start()
+    # Запуск бота с броней от падений интернета
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
