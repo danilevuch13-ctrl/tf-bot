@@ -4,200 +4,178 @@ import time
 import threading
 import os
 import re
+import psycopg2
 from flask import Flask
 
-# --- ДАННЫЕ БОТА ---
+# --- КОНФИГУРАЦИЯ ---
 TOKEN = '8626634626:AAHLC6m4k9sFvHGvKzxJrVkqcAqqH6hhNoA'
-bot = telebot.TeleBot(TOKEN)
+DATABASE_URL = 'postgresql://postgres:29118041393Aa@db.hdjvfiolfbghpvesuumm.supabase.co:5432/postgres'
 
-# Словари для хранения данных в памяти
-watchers = {}      # {link: set(chat_id1, chat_id2, ...)}
-last_state = {}    # {link: "OPEN" / "FULL" / "ERROR"}
-known_users = {}   # {chat_id: "Имя/Юзернейм"}
+bot = telebot.TeleBot(TOKEN)
 lock = threading.Lock()
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
-    'Accept-Language': 'en-US,en;q=0.9'
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1'
 }
 
-# --- Flask для Render (чтобы сервер не засыпал) ---
-app = Flask(__name__)
+# --- РАБОТА С БАЗОЙ ДАННЫХ ---
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
 
-@app.route('/')
-def index():
-    return 'Bot is running', 200
+def init_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # Таблица пользователей
+    cur.execute('''CREATE TABLE IF NOT EXISTS users (
+        chat_id BIGINT PRIMARY KEY,
+        username TEXT
+    )''')
+    # Таблица ссылок
+    cur.execute('''CREATE TABLE IF NOT EXISTS links (
+        id SERIAL PRIMARY KEY,
+        chat_id BIGINT,
+        url TEXT,
+        last_status TEXT DEFAULT 'FULL',
+        UNIQUE(chat_id, url)
+    )''')
+    conn.commit()
+    cur.close()
+    conn.close()
 
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
-
-# --- Логика проверки TestFlight ---
+# --- ЛОГИКА ПРОВЕРКИ ---
 def check_testflight_slot(url):
     clean_url = url.split('?')[0]
-    # Добавляем временную метку, чтобы Apple не выдавала кэшированную страницу
     no_cache_url = f"{clean_url}?t={int(time.time() * 1000)}"
-
     try:
         response = requests.get(no_cache_url, headers=HEADERS, timeout=10)
         if response.status_code == 200:
-            text = response.text
-            if "Join the Beta" in text or "To join the" in text or '"status":"ACCEPTING"' in text:
+            if "Join the Beta" in response.text or '"status":"ACCEPTING"' in response.text:
                 return "OPEN"
-            elif "This beta is full" in text or '"status":"FULL"' in text:
-                return "FULL"
-        elif response.status_code == 429:
-            time.sleep(10)
-    except Exception:
-        pass
+            return "FULL"
+    except: pass
     return "ERROR"
 
-# --- Фоновый мониторинг ссылок ---
-def monitor_link():
+def monitor_logic():
     while True:
-        with lock:
-            snapshot_watchers = {link: set(ids) for link, ids in watchers.items()}
-            snapshot_state = dict(last_state)
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT DISTINCT url FROM links")
+            urls = [row[0] for row in cur.fetchall()]
 
-        for link, chat_ids in snapshot_watchers.items():
-            if not chat_ids:
-                continue
+            for url in urls:
+                current_status = check_testflight_slot(url)
+                
+                cur.execute("SELECT chat_id, last_status FROM links WHERE url = %s", (url,))
+                records = cur.fetchall()
+                
+                old_status = records[0][1] if records else "FULL"
 
-            current_status = check_testflight_slot(link)
-            prev_status = snapshot_state.get(link, "FULL")
+                if current_status == "OPEN" and old_status != "OPEN":
+                    for row in records:
+                        bot.send_message(row[0], f"🟢 Место появилось! Быстрее забирай:\n{url}")
+                elif current_status == "FULL" and old_status == "OPEN":
+                    for row in records:
+                        bot.send_message(row[0], f"🔴 Места закончились для:\n{url}")
+                
+                cur.execute("UPDATE links SET last_status = %s WHERE url = %s", (current_status, url))
+            
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print(f"Monitor error: {e}")
+        time.sleep(1)
 
-            # Если место открылось
-            if current_status == "OPEN" and prev_status != "OPEN":
-                for chat_id in chat_ids:
-                    try:
-                        bot.send_message(chat_id, f"🟢 Место появилось! Быстрее забирай:\n{link}")
-                    except Exception:
-                        pass
-                with lock:
-                    last_state[link] = "OPEN"
-
-            # Если места закончились
-            elif current_status == "FULL" and prev_status == "OPEN":
-                for chat_id in chat_ids:
-                    try:
-                        bot.send_message(chat_id, f"🔴 Места закончились. Жду следующего окна для:\n{link}")
-                    except Exception:
-                        pass
-                with lock:
-                    last_state[link] = "FULL"
-
-        time.sleep(0.5)
-
-# --- Команды бота ---
-
+# --- КОМАНДЫ ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    # Запоминаем пользователя
-    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
-    known_users[message.chat.id] = username
-
-    # Текст с кликабельной ссылкой
-    text = ("👋 Рад приветствовать всех, а особенно участников <a href='https://t.me/NuviraByteCore_bot'>NuviraByteCore</a>!\n\n"
-            "Отправь ссылку TestFlight, чтобы добавить её в отслеживание.\n\n"
-            "Команды:\n"
-            "📋 /list — посмотреть все твои активные ссылки\n"
-            "🗑 /del [ссылка] — удалить конкретную ссылку\n"
-            "⛔ /stop — удалить вообще все твои ссылки")
+    uid = message.chat.id
+    name = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
     
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO users (chat_id, username) VALUES (%s, %s) ON CONFLICT (chat_id) DO UPDATE SET username = %s", (uid, name, name))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    text = ("👋 Привет участникам <a href='https://t.me/NuviraByteCore_bot'>NuviraByteCore</a>!\n\n"
+            "Пришли ссылку для отслеживания.\n"
+            "📋 /list — твои ссылки\n"
+            "🗑 /del — удаление (или 'del' в ответ на сообщение)")
     bot.reply_to(message, text, parse_mode='html', disable_web_page_preview=True)
 
 @bot.message_handler(commands=['danyaxap'])
-def show_stats(message):
-    if not known_users:
-        bot.reply_to(message, "Пока никого нет в базе.")
-        return
-        
-    text = f"📊 Всего пользователей: {len(known_users)}\n\nСписок:\n"
-    for chat_id, name in known_users.items():
-        text += f"👤 {name}\n"
+def admin_stats(message):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT username FROM users")
+    users = cur.fetchall()
+    cur.execute("SELECT COUNT(*) FROM links")
+    links_count = cur.fetchone()[0]
+    
+    text = f"📊 Пользователей: {len(users)}\n🔗 Ссылок в работе: {links_count}\n\n"
+    text += "\n".join([u[0] for u in users])
     bot.reply_to(message, text)
+    cur.close()
+    conn.close()
 
 @bot.message_handler(commands=['list'])
 def list_links(message):
-    chat_id = message.chat.id
-    active_links = []
-    with lock:
-        for link, users in watchers.items():
-            if chat_id in users:
-                active_links.append(link)
-
-    if active_links:
-        text = "📋 Ты сейчас отслеживаешь:\n\n" + "\n\n".join(active_links)
-        bot.reply_to(message, text)
-    else:
-        bot.reply_to(message, "Твой список пуст.")
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT url FROM links WHERE chat_id = %s", (message.chat.id,))
+    rows = cur.fetchall()
+    bot.reply_to(message, "📋 Твои ссылки:\n\n" + "\n".join([r[0] for r in rows]) if rows else "Список пуст.")
+    cur.close()
+    conn.close()
 
 @bot.message_handler(commands=['del'])
-def del_link(message):
-    chat_id = message.chat.id
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        bot.reply_to(message, "Укажи ссылку после команды.")
-        return
+@bot.message_handler(func=lambda m: m.text and m.text.lower() == 'del' and m.reply_to_message)
+def delete_link(message):
+    target = None
+    if message.reply_to_message and message.reply_to_message.text:
+        match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', message.reply_to_message.text)
+        if match: target = match.group(1)
+    if not target and message.text.startswith('/del'):
+        parts = message.text.split(maxsplit=1)
+        if len(parts) > 1: target = parts[1].strip()
 
-    link_to_remove = parts[1].strip()
-    removed = False
-    with lock:
-        if link_to_remove in watchers and chat_id in watchers[link_to_remove]:
-            watchers[link_to_remove].discard(chat_id)
-            removed = True
-            if not watchers[link_to_remove]:
-                del watchers[link_to_remove]
-                if link_to_remove in last_state:
-                    del last_state[link_to_remove]
-
-    if removed:
-        bot.reply_to(message, "🗑 Ссылка удалена.")
+    if target:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (message.chat.id, target))
+        conn.commit()
+        bot.reply_to(message, "🗑 Удалено.")
+        cur.close()
+        conn.close()
     else:
-        bot.reply_to(message, "Этой ссылки нет в твоем списке.")
+        bot.reply_to(message, "❌ Ссылка не найдена.")
 
-@bot.message_handler(commands=['stop'])
-def stop_monitoring(message):
-    chat_id = message.chat.id
-    removed = False
-    with lock:
-        for link in list(watchers.keys()):
-            if chat_id in watchers[link]:
-                watchers[link].discard(chat_id)
-                removed = True
-                if not watchers[link]:
-                    del watchers[link]
-                    if link in last_state:
-                        del last_state[link]
-    if removed:
-        bot.reply_to(message, "⛔ Все твои ссылки удалены.")
-    else:
-        bot.reply_to(message, "У тебя нет активных ссылок.")
-
-@bot.message_handler(func=lambda m: 'testflight.apple.com/join/' in m.text and not m.text.startswith('/del'))
-def set_link(message):
-    chat_id = message.chat.id
-    
-    # Очистка ссылки от лишнего текста
+@bot.message_handler(func=lambda m: 'testflight.apple.com/join/' in m.text)
+def add_link(message):
     match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', message.text)
-    
-    if not match:
-        bot.reply_to(message, "❌ Ссылка TestFlight не найдена.")
-        return
-        
-    link = match.group(1)
+    if match:
+        url = match.group(1)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("INSERT INTO links (chat_id, url) VALUES (%s, %s)", (message.chat.id, url))
+            conn.commit()
+            bot.reply_to(message, "✅ Добавлено в базу. Теперь я никогда её не забуду!")
+        except:
+            bot.reply_to(message, "⚠️ Эта ссылка уже отслеживается.")
+        cur.close()
+        conn.close()
 
-    with lock:
-        if link not in watchers:
-            watchers[link] = set()
-            last_state[link] = "FULL"
-        watchers[link].add(chat_id)
-        user_links = sum(1 for users in watchers.values() if chat_id in users)
-
-    bot.reply_to(message, f"✅ Ссылка добавлена. Ищу свободные места. Отслеживается: {user_links}")
+# --- ЗАПУСК ---
+app = Flask(__name__)
+@app.route('/')
+def home(): return "OK", 200
 
 if __name__ == '__main__':
-    print("Бот запущен.")
-    threading.Thread(target=run_flask, daemon=True).start()
-    threading.Thread(target=monitor_link, daemon=True).start()
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    init_db()
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))), daemon=True).start()
+    threading.Thread(target=monitor_logic, daemon=True).start()
+    bot.infinity_polling()
