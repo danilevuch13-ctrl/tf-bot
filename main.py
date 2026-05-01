@@ -6,7 +6,7 @@ import os
 import re
 from flask import Flask
 
-TOKEN = '8626634626:AAEJQmGBiOV7wl_CSOssozaEckjHRJOJE-E'
+TOKEN = '8626634626:AAG6bZMWEQlx8nH7wW7OAZBScgXLqd5L-tk'
 bot = telebot.TeleBot(TOKEN)
 
 # Словари для памяти
