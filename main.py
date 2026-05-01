@@ -6,6 +6,7 @@ import os
 import re
 import psycopg2
 from flask import Flask
+from telebot import types
 
 # --- КОНФИГУРАЦИЯ ---
 TOKEN = '8626634626:AAHLC6m4k9sFvHGvKzxJrVkqcAqqH6hhNoA'
@@ -25,12 +26,13 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
-    # Таблица пользователей
+    # Обновленная таблица пользователей с настройками
     cur.execute('''CREATE TABLE IF NOT EXISTS users (
         chat_id BIGINT PRIMARY KEY,
-        username TEXT
+        username TEXT,
+        silent_mode BOOLEAN DEFAULT FALSE,
+        notify_full BOOLEAN DEFAULT TRUE
     )''')
-    # Таблица ссылок
     cur.execute('''CREATE TABLE IF NOT EXISTS links (
         id SERIAL PRIMARY KEY,
         chat_id BIGINT,
@@ -65,29 +67,58 @@ def monitor_logic():
 
             for url in urls:
                 current_status = check_testflight_slot(url)
-                
-                cur.execute("SELECT chat_id, last_status FROM links WHERE url = %s", (url,))
+                cur.execute("""
+                    SELECT l.chat_id, l.last_status, u.silent_mode, u.notify_full 
+                    FROM links l 
+                    JOIN users u ON l.chat_id = u.chat_id 
+                    WHERE l.url = %s
+                """, (url,))
                 records = cur.fetchall()
                 
-                old_status = records[0][1] if records else "FULL"
+                if not records: continue
+                old_status = records[0][1]
 
-                if current_status == "OPEN" and old_status != "OPEN":
-                    for row in records:
-                        bot.send_message(row[0], f"🟢 Место появилось! Быстрее забирай:\n{url}")
-                elif current_status == "FULL" and old_status == "OPEN":
-                    for row in records:
-                        bot.send_message(row[0], f"🔴 Места закончились для:\n{url}")
-                
-                cur.execute("UPDATE links SET last_status = %s WHERE url = %s", (current_status, url))
+                if current_status != old_status:
+                    for chat_id, _, silent, notify_full in records:
+                        try:
+                            if current_status == "OPEN":
+                                bot.send_message(chat_id, f"🟢 Место появилось!\n{url}", disable_notification=silent)
+                            elif current_status == "FULL" and notify_full:
+                                bot.send_message(chat_id, f"🔴 Места закончились для:\n{url}", disable_notification=silent)
+                        except: pass
+                    
+                    cur.execute("UPDATE links SET last_status = %s WHERE url = %s", (current_status, url))
             
             conn.commit()
             cur.close()
             conn.close()
-        except Exception as e:
-            print(f"Monitor error: {e}")
+        except Exception as e: print(f"Monitor error: {e}")
         time.sleep(1)
 
-# --- КОМАНДЫ ---
+# --- КЛАВИАТУРЫ ---
+def get_settings_keyboard(chat_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT silent_mode, notify_full FROM users WHERE chat_id = %s", (chat_id,))
+    res = cur.fetchone()
+    cur.close()
+    conn.close()
+    
+    if not res: return None
+    silent, full = res
+    
+    markup = types.InlineKeyboardMarkup()
+    btn_silent = types.InlineKeyboardButton(
+        f"🔔 Звук: {'ВЫКЛ' if silent else 'ВКЛ'}", callback_data="toggle_silent"
+    )
+    btn_full = types.InlineKeyboardButton(
+        f"🔴 Уведомления о FULL: {'ВКЛ' if full else 'ВЫКЛ'}", callback_data="toggle_full"
+    )
+    markup.add(btn_silent)
+    markup.add(btn_full)
+    return markup
+
+# --- ОБРАБОТЧИКИ ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     uid = message.chat.id
@@ -100,11 +131,42 @@ def send_welcome(message):
     cur.close()
     conn.close()
 
-    text = ("👋 Привет участникам <a href='https://t.me/NuviraByteCore_bot'>NuviraByteCore</a>!\n\n"
-            "Пришли ссылку для отслеживания.\n"
-            "📋 /list — твои ссылки\n"
-            "🗑 /del — удаление (или 'del' в ответ на сообщение)")
-    bot.reply_to(message, text, parse_mode='html', disable_web_page_preview=True)
+    text = ("👋 Рад видеть тебя в <a href='https://t.me/NuviraByteCore_bot'>NuviraByteCore</a>!\n\n"
+            "Пришли ссылку TestFlight для начала работы.\n\n"
+            "⚙️ Настрой уведомления кнопкой ниже:")
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("⚙️ Настройки", callback_data="open_settings"))
+    bot.send_message(uid, text, parse_mode='html', reply_markup=markup, disable_web_page_preview=True)
+
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    if call.data == "open_settings":
+        kb = get_settings_keyboard(call.message.chat.id)
+        bot.edit_message_text("Настрой бота под себя:", call.message.chat.id, call.message.message_id, reply_markup=kb)
+    
+    elif call.data == "toggle_silent":
+        cur.execute("UPDATE users SET silent_mode = NOT silent_mode WHERE chat_id = %s", (call.message.chat.id,))
+        conn.commit()
+        kb = get_settings_keyboard(call.message.chat.id)
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=kb)
+        bot.answer_callback_query(call.id, "Режим уведомлений изменен")
+
+    elif call.data == "toggle_full":
+        cur.execute("UPDATE users SET notify_full = NOT notify_full WHERE chat_id = %s", (call.message.chat.id,))
+        conn.commit()
+        kb = get_settings_keyboard(call.message.chat.id)
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=kb)
+        bot.answer_callback_query(call.id, "Фильтр статусов изменен")
+    
+    cur.close()
+    conn.close()
+
+# (Команды /list, /del, /danyaxap и логика добавления ссылок остаются такими же, как в прошлом коде)
+# Оставил их без изменений для краткости, просто добавь их из прошлого сообщения.
 
 @bot.message_handler(commands=['danyaxap'])
 def admin_stats(message):
@@ -114,12 +176,9 @@ def admin_stats(message):
     users = cur.fetchall()
     cur.execute("SELECT COUNT(*) FROM links")
     links_count = cur.fetchone()[0]
-    
-    text = f"📊 Пользователей: {len(users)}\n🔗 Ссылок в работе: {links_count}\n\n"
-    text += "\n".join([u[0] for u in users])
+    text = f"📊 Пользователей: {len(users)}\n🔗 Ссылок: {links_count}\n\n" + "\n".join([u[0] for u in users])
     bot.reply_to(message, text)
-    cur.close()
-    conn.close()
+    cur.close(); conn.close()
 
 @bot.message_handler(commands=['list'])
 def list_links(message):
@@ -128,8 +187,7 @@ def list_links(message):
     cur.execute("SELECT url FROM links WHERE chat_id = %s", (message.chat.id,))
     rows = cur.fetchall()
     bot.reply_to(message, "📋 Твои ссылки:\n\n" + "\n".join([r[0] for r in rows]) if rows else "Список пуст.")
-    cur.close()
-    conn.close()
+    cur.close(); conn.close()
 
 @bot.message_handler(commands=['del'])
 @bot.message_handler(func=lambda m: m.text and m.text.lower() == 'del' and m.reply_to_message)
@@ -139,35 +197,25 @@ def delete_link(message):
         match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', message.reply_to_message.text)
         if match: target = match.group(1)
     if not target and message.text.startswith('/del'):
-        parts = message.text.split(maxsplit=1)
+        parts = message.text.split(maxsplit=1); 
         if len(parts) > 1: target = parts[1].strip()
-
     if target:
-        conn = get_db_connection()
-        cur = conn.cursor()
+        conn = get_db_connection(); cur = conn.cursor()
         cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (message.chat.id, target))
-        conn.commit()
-        bot.reply_to(message, "🗑 Удалено.")
-        cur.close()
-        conn.close()
-    else:
-        bot.reply_to(message, "❌ Ссылка не найдена.")
+        conn.commit(); bot.reply_to(message, "🗑 Удалено."); cur.close(); conn.close()
 
-@bot.message_handler(func=lambda m: 'testflight.apple.com/join/' in m.text)
+@bot.message_handler(func=lambda m: m.text and 'testflight.apple.com/join/' in m.text)
 def add_link(message):
     match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', message.text)
     if match:
         url = match.group(1)
-        conn = get_db_connection()
-        cur = conn.cursor()
+        conn = get_db_connection(); cur = conn.cursor()
         try:
             cur.execute("INSERT INTO links (chat_id, url) VALUES (%s, %s)", (message.chat.id, url))
             conn.commit()
-            bot.reply_to(message, "✅ Добавлено в базу. Теперь я никогда её не забуду!")
-        except:
-            bot.reply_to(message, "⚠️ Эта ссылка уже отслеживается.")
-        cur.close()
-        conn.close()
+            bot.reply_to(message, "✅ Добавлено. Настрой уведомления в /start если нужно.")
+        except: bot.reply_to(message, "⚠️ Уже отслеживается.")
+        cur.close(); conn.close()
 
 # --- ЗАПУСК ---
 app = Flask(__name__)
