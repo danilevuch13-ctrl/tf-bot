@@ -1,5 +1,4 @@
 import telebot
-import requests
 import time
 import threading
 import os
@@ -12,6 +11,9 @@ from telebot import types
 from bs4 import BeautifulSoup
 from flask import Flask
 
+# 🚨 ВАЖНО: ИСПОЛЬЗУЕМ АНТИ-ДЕТЕКТ БИБЛИОТЕКУ 🚨
+from curl_cffi import requests
+
 # =================================================================
 # --- КОНФИГУРАЦИЯ ---
 # =================================================================
@@ -23,12 +25,9 @@ TOKEN = os.environ.get('BOT_TOKEN')
 DATABASE_URL = os.environ.get('DATABASE_URL')
 ADMIN_ID = 689318312  
 
+# Оставляем только язык, остальное библиотека подделает сама
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8,uk;q=0.7',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive'
+    'Accept-Language': 'en-US,en;q=0.9'
 }
 
 bot = telebot.TeleBot(TOKEN)
@@ -84,27 +83,31 @@ def init_db():
         cur.close()
 
 # =================================================================
-# --- ЛОГИКА ПАРСИНГА ---
+# --- ЛОГИКА ПАРСИНГА (АНТИ-ДЕТЕКТ) ---
 # =================================================================
 
 def check_testflight_status(url):
     try:
         clean_url = url.split('?')[0]
-        response = requests.get(clean_url, headers=HEADERS, timeout=7)
+        
+        # impersonate="safari15_5" заставляет Apple думать, что мы - браузер Safari на Маке
+        response = requests.get(clean_url, headers=HEADERS, impersonate="safari15_5", timeout=10)
         
         if response.status_code == 429: return "ERROR_429"
         if response.status_code != 200: return f"ERROR_HTTP_{response.status_code}"
 
+        # Если в финальном URL нет слова join, значит Apple спалила нас и перекинула на справку
+        if "join" not in response.url:
+            return "ERROR_BLOCKED_BY_APPLE"
+
         content = response.text.lower()
 
-        # 1. Признаки FULL
-        full_signs = ['is full', 'not accepting', 'заполнена', 'мест нет', 'не принимает', 'переповнена', 'не приймає', "isn't accepting"]
-        if any(sign in content for sign in full_signs):
+        # 1. Признаки FULL (Только точные совпадения)
+        if 'is full' in content or "isn't accepting" in content:
             return "FULL"
 
-        # 2. Признаки OPEN (расширено: добавили фразы с десктопной страницы TestFlight)
-        open_signs = ['itms-beta://', 'class="button-cta"', 'start testing', 'accept', 'принять', 'начать', 'почати', 'долучитися', 'to join the', 'open the link on your iphone']
-        if any(sign in content for sign in open_signs):
+        # 2. Признаки OPEN (Точные признаки наличия кнопки или диплинка)
+        if 'itms-beta://' in content or 'button-cta' in content or 'start testing' in content or 'to join the' in content:
             return "OPEN"
 
         return "ERROR_PARSE"
@@ -114,7 +117,8 @@ def check_testflight_status(url):
 
 def get_app_name(url):
     try:
-        res = requests.get(url, headers=HEADERS, timeout=5)
+        clean_url = url.split('?')[0]
+        res = requests.get(clean_url, headers=HEADERS, impersonate="safari15_5", timeout=5)
         soup = BeautifulSoup(res.text, 'html.parser')
         og_title = soup.find('meta', property='og:title')
         if og_title:
@@ -152,7 +156,8 @@ def monitor_worker(chat_id, url):
 
                 if "ERROR" in current_status:
                     cur.close()
-                    time.sleep(5) 
+                    # Если нас блокируют, спим подольше, чтобы не злить Apple
+                    time.sleep(10) 
                     continue
 
                 if current_status != last_status:
@@ -172,7 +177,8 @@ def monitor_worker(chat_id, url):
         except Exception as e:
             logger.error(f"Worker loop error: {e}")
         
-        time.sleep(0.5)
+        # Оставил 1 секунду. 0.5 может спровоцировать WAF быстрее.
+        time.sleep(1)
 
 def start_thread(chat_id, url):
     key = (chat_id, url)
@@ -251,7 +257,6 @@ def cmd_del(m):
         cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (m.chat.id, parts[1].strip()))
     bot.reply_to(m, "🗑 Удалено.")
 
-# 🚨 МОДЕРНИЗИРОВАННАЯ КОМАНДА /test (СКАЧИВАЕТ HTML) 🚨
 @bot.message_handler(commands=['test'])
 def cmd_test(m):
     if m.chat.id != ADMIN_ID: return
@@ -259,22 +264,20 @@ def cmd_test(m):
     if len(parts) < 2: return bot.reply_to(m, "Укажи ссылку. Пример: /test https://...")
     
     url = parts[1].strip()
-    bot.reply_to(m, "🔍 Тестирую и скачиваю страницу с Apple...")
+    bot.reply_to(m, "🔍 Тестирую маскировку под Safari...")
     
     status = check_testflight_status(url)
     
     try:
         clean_url = url.split('?')[0]
-        res = requests.get(clean_url, headers=HEADERS, timeout=7)
-        # Сохраняем то, что видит бот, в файл
+        res = requests.get(clean_url, headers=HEADERS, impersonate="safari15_5", timeout=10)
         with open("debug_apple.html", "w", encoding="utf-8") as f:
             f.write(res.text)
         
-        # Отправляем файл в Телеграм
         with open("debug_apple.html", "rb") as doc:
-            bot.send_document(m.chat.id, doc, caption=f"Статус бота: {status}\n\n❗️ Открой этот HTML-файл. Там ровно то, что отдала Apple нашему серверу.")
+            bot.send_document(m.chat.id, doc, caption=f"Текущий статус бота: {status}\n\nЕсли статус ERROR_BLOCKED_BY_APPLE, значит даже маскировка не спасла от WAF на серверах Render.")
     except Exception as e:
-        bot.send_message(m.chat.id, f"Статус: {status}\nНе удалось скачать HTML: {e}")
+        bot.send_message(m.chat.id, f"Статус: {status}\nОшибка при дебаге: {e}")
 
 @bot.message_handler(func=lambda m: 'testflight.apple.com/join/' in m.text)
 def handle_link(m):
