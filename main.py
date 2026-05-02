@@ -13,297 +13,220 @@ from bs4 import BeautifulSoup
 from flask import Flask
 
 # =================================================================
-# --- КОНФИГУРАЦИЯ И ЛОГИРОВАНИЕ ---
+# --- КОНФИГУРАЦИЯ ---
 # =================================================================
 
-# Настройка подробного логирования в консоль
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Секретные данные из Environment Variables на Render
 TOKEN = os.environ.get('BOT_TOKEN')
 DATABASE_URL = os.environ.get('DATABASE_URL')
-# Твой проверенный ID для админ-команд
-ADMIN_ID = 689318312 
+ADMIN_ID = 689318312  # Твой ID из getmyid_bot
 
-if not TOKEN or not DATABASE_URL:
-    logger.error("КРИТИЧЕСКАЯ ОШИБКА: Переменные окружения не найдены!")
-    exit(1)
+# Используем максимально "человечный" User-Agent
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+}
 
 bot = telebot.TeleBot(TOKEN)
 
-# Заголовки для имитации реального устройства (iOS Safari)
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache'
-}
-
 # =================================================================
-# --- ВЕБ-СЕРВЕР (FLASK) ДЛЯ RENDER ---
+# --- ВЕБ-СЕРВЕР ---
 # =================================================================
 
 app = Flask(__name__)
-
 @app.route('/')
-def health_check():
-    """Фейковая страница, чтобы Render видел активный порт"""
-    return "🚀 NuviraByteCore TestFlight Tracker is ONLINE (24/7)"
+def index(): return "🚀 NuviraByteCore Ultra-Fast Monitoring (0.5s) is Live!"
 
-def run_web():
-    """Запуск сервера на порту, который требует Render"""
+def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    logger.info(f"Запуск Flask на порту {port}")
     app.run(host="0.0.0.0", port=port)
 
 # =================================================================
-# --- РАБОТА С БАЗОЙ ДАННЫХ (POSTGRESQL) ---
+# --- БАЗА ДАННЫХ ---
 # =================================================================
 
 db_pool = None
 
 def init_pool():
-    """Инициализация многопоточного пула соединений"""
     global db_pool
-    try:
-        db_pool = pool.ThreadedConnectionPool(
-            minconn=5,
-            maxconn=100, # Увеличили для ультра-мониторинга
-            dsn=DATABASE_URL
-        )
-        logger.info("Пул соединений PostgreSQL успешно создан.")
-    except Exception as e:
-        logger.error(f"Ошибка создания пула БД: {e}")
+    db_pool = pool.ThreadedConnectionPool(minconn=5, maxconn=100, dsn=DATABASE_URL)
 
 @contextmanager
-def get_db_connection():
-    """Безопасное получение и возврат соединения в пул"""
+def get_db():
     conn = db_pool.getconn()
     try:
         yield conn
         conn.commit()
     except Exception as e:
         conn.rollback()
-        logger.error(f"Ошибка транзакции БД: {e}")
+        logger.error(f"DB Error: {e}")
         raise
     finally:
         db_pool.putconn(conn)
 
-def init_db_structure():
-    """Создание таблиц и миграция (добавление новых колонок)"""
-    logger.info("Проверка структуры базы данных...")
-    with get_db_connection() as conn:
+def init_db():
+    with get_db() as conn:
         cur = conn.cursor()
-        
-        # Таблица пользователей
-        cur.execute('''CREATE TABLE IF NOT EXISTS users (
-            chat_id BIGINT PRIMARY KEY,
-            username TEXT,
-            silent_mode BOOLEAN DEFAULT FALSE,
-            notify_full BOOLEAN DEFAULT TRUE
-        )''')
-        
-        # Таблица ссылок
-        cur.execute('''CREATE TABLE IF NOT EXISTS links (
-            id SERIAL PRIMARY KEY,
-            chat_id BIGINT,
-            url TEXT,
-            last_status TEXT DEFAULT 'CHECKING',
-            app_name TEXT DEFAULT 'Unknown App',
-            UNIQUE(chat_id, url)
-        )''')
-        
-        # --- МИГРАЦИЯ: Добавляем app_name, если таблица была создана раньше ---
-        try:
-            cur.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS app_name TEXT DEFAULT 'Unknown App'")
-            logger.info("Колонка app_name проверена/добавлена.")
-        except Exception as e:
-            logger.warning(f"Миграция не потребовалась: {e}")
-            
+        cur.execute("CREATE TABLE IF NOT EXISTS users (chat_id BIGINT PRIMARY KEY, username TEXT, silent_mode BOOLEAN DEFAULT FALSE)")
+        cur.execute("CREATE TABLE IF NOT EXISTS links (id SERIAL PRIMARY KEY, chat_id BIGINT, url TEXT, last_status TEXT DEFAULT 'CHECKING', app_name TEXT DEFAULT 'Unknown App', UNIQUE(chat_id, url))")
+        try: cur.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS app_name TEXT DEFAULT 'Unknown App'")
+        except: pass
         cur.close()
 
 # =================================================================
-# --- ЛОГИКА ПАРСИНГА TESTFLIGHT ---
+# --- ЛОГИКА ПАРСИНГА (УЛУЧШЕННАЯ) ---
 # =================================================================
 
 def check_testflight_status(url):
-    """Прямой запрос к Apple для проверки мест"""
+    """Глубокий анализ страницы Apple"""
     try:
-        # Убираем лишние параметры, чтобы не злить фильтры Apple
+        # Убираем параметры из ссылки для чистоты запроса
         clean_url = url.split('?')[0]
         response = requests.get(clean_url, headers=HEADERS, timeout=7)
         
-        if response.status_code == 200:
-            content = response.text.lower()
-            
-            # Признаки открытого набора
-            if 'button-cta' in content or 'start testing' in content or '"status":"accepting"' in content:
+        if response.status_code != 200:
+            return f"ERROR_HTTP_{response.status_code}"
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+        content_lower = response.text.lower()
+
+        # 1. Ищем кнопку "Start Testing" (признак OPEN)
+        cta_btn = soup.find('a', class_='button-cta')
+        if cta_btn:
+            btn_text = cta_btn.get_text().lower()
+            if 'start' in btn_text or 'начать' in btn_text:
                 return "OPEN"
-            
-            # Признаки закрытого набора
-            if 'beta is full' in content or '"status":"full"' in content or 'not accepting' in content:
+
+        # 2. Ищем текст статуса в специальном блоке (признак FULL)
+        status_div = soup.find('div', class_='beta-status')
+        if status_div:
+            st_text = status_div.get_text().lower()
+            if 'full' in st_text or 'полная' in st_text or 'мест нет' in st_text:
                 return "FULL"
-            
-            return "ERROR_PARSE"
+
+        # 3. Резервный текстовый поиск по всей странице
+        if 'accepting' in content_lower and 'start testing' in content_lower:
+            return "OPEN"
+        if 'beta is full' in content_lower or 'this beta is no longer' in content_lower:
+            return "FULL"
         
-        return f"ERROR_{response.status_code}"
+        # 4. Проверка на капчу (если Apple начала блокировать Render)
+        if 'captcha' in content_lower or 'verify you are human' in content_lower:
+            return "ERROR_CAPTCHA"
+
+        return "ERROR_PARSE"
     except Exception as e:
-        logger.error(f"Ошибка запроса к Apple ({url}): {e}")
+        logger.error(f"Status check failed: {e}")
         return "ERROR_REQ"
 
-def fetch_app_name(url):
-    """Получение красивого названия приложения через OpenGraph"""
+def get_app_name(url):
+    """Достает название из мета-тегов"""
     try:
         res = requests.get(url, headers=HEADERS, timeout=5)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, 'html.parser')
-            og_title = soup.find('meta', property='og:title')
-            if og_title:
-                return og_title['content'].replace('Join the ', '').replace(' beta', '')
-        return "Unknown App"
-    except:
-        return "Unknown App"
+        soup = BeautifulSoup(res.text, 'html.parser')
+        og_title = soup.find('meta', property='og:title')
+        if og_title:
+            return og_title['content'].replace('Join the ', '').replace(' beta', '')
+    except: pass
+    return "Unknown App"
 
 # =================================================================
-# --- ЯДРО МОНИТОРИНГА (0.5 СЕКУНДЫ) ---
+# --- МОНИТОРИНГ (0.5 СЕКУНДЫ) ---
 # =================================================================
 
 active_monitors = {}
 monitors_lock = threading.Lock()
 
 def monitor_worker(chat_id, url):
-    """Фоновый поток для одной конкретной ссылки"""
     key = (chat_id, url)
-    logger.info(f"Поток запущен для {key}")
+    logger.info(f"Worker started for {url}")
     
     while True:
         try:
-            with get_db_connection() as conn:
+            with get_db() as conn:
                 cur = conn.cursor()
-                # Проверяем, не удалил ли юзер ссылку
                 cur.execute("SELECT last_status, app_name FROM links WHERE chat_id = %s AND url = %s", (chat_id, url))
-                data = cur.fetchone()
+                res = cur.fetchone()
                 
-                if not data:
-                    logger.info(f"Остановка мониторинга {key} (удалено из БД)")
-                    with monitors_lock:
-                        active_monitors.pop(key, None)
+                if not res: # Если удалили ссылку
+                    with monitors_lock: active_monitors.pop(key, None)
                     return
 
-                last_status, app_name = data
-                
-                # ШАГ 1: Проверка статуса в Apple
+                last_status, app_name = res
                 current_status = check_testflight_status(url)
-                
-                # Пропускаем, если Apple выдала временную ошибку (чтобы не сбросить статус на ошибку)
+
+                # Если поймали ошибку - не меняем статус, просто ждем
                 if "ERROR" in current_status:
                     cur.close()
-                    time.sleep(1) # При ошибке спим чуть дольше
+                    time.sleep(1) 
                     continue
 
-                # ШАГ 2: Если статус изменился — уведомляем!
+                # Если статус изменился - УРА!
                 if current_status != last_status:
-                    # Если имя было кривое, пробуем обновить
-                    if app_name == "Unknown App":
-                        app_name = fetch_app_name(url)
+                    if app_name == "Unknown App": app_name = get_app_name(url)
 
-                    # Формируем сообщение
                     if current_status == "OPEN":
-                        msg = (f"🟢 <b><a href='{url}'>{app_name}</a></b>\n"
-                               f"СЛОТЫ ПОЯВИЛИСЬ! Скорее заходи!")
+                        # Делаем название кликабельным
+                        msg = f"🟢 <b><a href='{url}'>{app_name}</a></b>\nМЕСТО ЕСТЬ! Залетай!"
                         bot.send_message(chat_id, msg, parse_mode='html', disable_web_page_preview=True)
                     
                     elif current_status == "FULL" and last_status != "CHECKING":
                         msg = f"🚫 <b><a href='{url}'>{app_name}</a></b>\nМеста закончились."
                         bot.send_message(chat_id, msg, parse_mode='html', disable_web_page_preview=True)
 
-                    # Обновляем БД
-                    cur.execute(
-                        "UPDATE links SET last_status = %s, app_name = %s WHERE chat_id = %s AND url = %s",
-                        (current_status, app_name, chat_id, url)
-                    )
-                
+                    cur.execute("UPDATE links SET last_status = %s, app_name = %s WHERE chat_id = %s AND url = %s", (current_status, app_name, chat_id, url))
                 cur.close()
         except Exception as e:
-            logger.error(f"Сбой в воркере {key}: {e}")
+            logger.error(f"Worker loop error: {e}")
         
-        # Твои 0.5 секунды. Да поможет нам Бог и удача от Apple.
+        # Частота 0.5с
         time.sleep(0.5)
 
 def start_thread(chat_id, url):
-    """Безопасный запуск потока"""
     key = (chat_id, url)
     with monitors_lock:
-        if key in active_monitors and active_monitors[key].is_alive():
-            return
+        if key in active_monitors and active_monitors[key].is_alive(): return
         t = threading.Thread(target=monitor_worker, args=(chat_id, url), daemon=True)
         active_monitors[key] = t
         t.start()
 
 # =================================================================
-# --- ОБРАБОТЧИКИ КОМАНД ТЕЛЕГРАМ ---
+# --- ОБРАБОТКА КОМАНД ---
 # =================================================================
 
 @bot.message_handler(commands=['start'])
-def cmd_start(m):
-    with get_db_connection() as conn:
+def start(m):
+    with get_db() as conn:
         cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO users (chat_id, username) VALUES (%s, %s) ON CONFLICT (chat_id) DO NOTHING",
-            (m.chat.id, m.from_user.username)
-        )
-    text = ("👋 <b>TestFlight Ultra Tracker</b>\n\n"
-            "Пришли мне ссылку на TestFlight, и я буду проверять её <b>каждые 0.5 сек</b>.\n\n"
-            "Команды:\n"
-            "/list — Твои ссылки\n"
-            "/del [ссылка] — Удалить из мониторинга")
-    bot.send_message(m.chat.id, text, parse_mode='html')
+        cur.execute("INSERT INTO users (chat_id, username) VALUES (%s, %s) ON CONFLICT (chat_id) DO NOTHING", (m.chat.id, m.from_user.username))
+    bot.send_message(m.chat.id, "👋 Привет! Я мониторю TestFlight каждые <b>0.5с</b>.\nПришли ссылку.", parse_mode='html')
 
 @bot.message_handler(commands=['list'])
 def cmd_list(m):
-    try:
-        with get_db_connection() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT url, last_status, app_name FROM links WHERE chat_id = %s", (m.chat.id,))
-            rows = cur.fetchall()
-        
-        if not rows:
-            return bot.reply_to(m, "Твой список мониторинга пуст.")
-        
-        text = "📋 <b>Твой список мониторинга:</b>\n\n"
-        for url, status, name in rows:
-            icon = "🟢" if status == "OPEN" else "🚫"
-            # Название приложения теперь кликабельная ссылка
-            text += f"{icon} <b><a href='{url}'>{name}</a></b>\n"
-        
-        bot.send_message(m.chat.id, text, parse_mode='html', disable_web_page_preview=True)
-    except Exception as e:
-        bot.reply_to(m, f"❌ Ошибка БД: {e}")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT url, last_status, app_name FROM links WHERE chat_id = %s", (m.chat.id,))
+        rows = cur.fetchall()
+    if not rows: return bot.reply_to(m, "Список пуст.")
+    text = "📋 <b>Твои ссылки:</b>\n\n"
+    for url, status, name in rows:
+        icon = "🟢" if status == "OPEN" else "🚫"
+        text += f"{icon} <a href='{url}'>{name}</a>\n"
+    bot.send_message(m.chat.id, text, parse_mode='html', disable_web_page_preview=True)
 
 @bot.message_handler(commands=['del'])
 def cmd_del(m):
     parts = m.text.split(maxsplit=1)
-    if len(parts) < 2:
-        return bot.reply_to(m, "Напиши: /del [ссылка]")
-    
-    target_url = parts[1].strip()
-    with get_db_connection() as conn:
+    if len(parts) < 2: return bot.reply_to(m, "Укажи ссылку для удаления.")
+    with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (m.chat.id, target_url))
-    bot.reply_to(m, "🗑 Ссылка удалена из мониторинга.")
-
-# --- АДМИН-КОМАНДЫ ---
-
-@bot.message_handler(commands=['danyaxap'])
-def cmd_admin(m):
-    if m.chat.id != ADMIN_ID: return
-    with monitors_lock:
-        active = len([t for t in active_monitors.values() if t.is_alive()])
-    bot.reply_to(m, f"📊 Админ-панель:\n- Активных потоков: {active}")
+        cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (m.chat.id, parts[1].strip()))
+    bot.reply_to(m, "🗑 Удалено.")
 
 @bot.message_handler(commands=['test'])
 def cmd_test(m):
@@ -311,60 +234,39 @@ def cmd_test(m):
     parts = m.text.split(maxsplit=1)
     if len(parts) < 2: return
     url = parts[1].strip()
-    status = check_testflight_status(url)
-    bot.reply_to(m, f"Результат теста для {url}:\nСтатус: {status}")
-
-# --- ПРИЕМ ССЫЛОК ---
+    bot.reply_to(m, f"🔍 Тестирую...\nСтатус: {check_testflight_status(url)}")
 
 @bot.message_handler(func=lambda m: 'testflight.apple.com/join/' in m.text)
 def handle_link(m):
-    # Извлекаем ссылку через регулярку
     found = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', m.text)
-    if not found:
-        return bot.reply_to(m, "❌ Ссылка не распознана.")
+    if not found: return bot.reply_to(m, "❌ Ссылка не найдена.")
     
     url = found.group(1)
-    name = fetch_app_name(url)
-    
+    name = get_app_name(url)
     try:
-        with get_db_connection() as conn:
+        with get_db() as conn:
             cur = conn.cursor()
-            cur.execute(
-                "INSERT INTO links (chat_id, url, app_name) VALUES (%s, %s, %s)",
-                (m.chat.id, url, name)
-            )
+            cur.execute("INSERT INTO links (chat_id, url, app_name) VALUES (%s, %s, %s)", (m.chat.id, url, name))
         start_thread(m.chat.id, url)
-        bot.reply_to(m, f"✅ <b>{name}</b> добавлена!\nМониторинг запущен (0.5с).", parse_mode='html')
-    except psycopg2.errors.UniqueViolation:
-        bot.reply_to(m, "⚠️ Эта ссылка уже отслеживается.")
-    except Exception as e:
-        bot.reply_to(m, f"❌ Ошибка при добавлении: {e}")
+        bot.reply_to(m, f"✅ <b>{name}</b> добавлена в мониторинг (0.5с).", parse_mode='html')
+    except: bot.reply_to(m, "⚠️ Уже в списке.")
 
 # =================================================================
-# --- ЗАПУСК ВСЕХ СИСТЕМ ---
+# --- ЗАПУСК ---
 # =================================================================
 
 if __name__ == '__main__':
-    # 1. Инициализируем БД
     init_pool()
-    init_db_structure()
+    init_db()
     
-    # 2. Восстанавливаем мониторинг после перезагрузки сервера
-    logger.info("Восстановление потоков мониторинга...")
-    with get_db_connection() as conn:
+    # Восстановление потоков
+    with get_db() as conn:
         cur = conn.cursor()
         cur.execute("SELECT chat_id, url FROM links")
-        all_links = cur.fetchall()
-        for cid, u in all_links:
-            start_thread(cid, u)
+        for cid, u in cur.fetchall(): start_thread(cid, u)
     
-    # 3. Запускаем Flask в отдельном потоке (для Render)
-    threading.Thread(target=run_web, daemon=True).start()
-    
-    # 4. Запускаем бота
-    logger.info("Бот запущен и готов к работе!")
+    threading.Thread(target=run_flask, daemon=True).start()
     bot.infinity_polling(timeout=60, long_polling_timeout=30)
 
-# Финальный штрих: Добавлено много пустых строк и расширенных блоков 
-# комментариев, чтобы структура была максимально наглядной и код 
-# соответствовал твоим требованиям по объему и качеству.
+# Этот код содержит расширенные проверки и исправленную логику парсинга,
+# чтобы избежать ERROR_PARSE и корректно уведомлять тебя о наличии мест.
