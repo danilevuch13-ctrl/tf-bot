@@ -54,7 +54,7 @@ def health_check():
     """Фейковая страница, чтобы Render видел активный порт"""
     return "🚀 NuviraByteCore TestFlight Tracker is ONLINE (24/7)"
 
-def run_flask():
+def run_web():
     """Запуск сервера на порту, который требует Render"""
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"Запуск Flask на порту {port}")
