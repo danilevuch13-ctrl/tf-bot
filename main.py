@@ -312,6 +312,56 @@ def cmd_test(m):
     finally:
         session.close()
 
+# 🚨 СЕКРЕТНАЯ АДМИНСКАЯ КОМАНДА /danyaxap 🚨
+@bot.message_handler(commands=['danyaxap'])
+def cmd_admin_panel(m):
+    if m.chat.id != ADMIN_ID:
+        return
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        # Собираем всех юзеров и их ссылки (если есть)
+        cur.execute("""
+            SELECT u.username, u.chat_id, l.app_name, l.url 
+            FROM users u 
+            LEFT JOIN links l ON u.chat_id = l.chat_id
+            ORDER BY u.chat_id
+        """)
+        rows = cur.fetchall()
+
+    if not rows:
+        return bot.reply_to(m, "База данных пуста.")
+
+    users_dict = {}
+    total_links = 0
+    unique_urls = set()
+
+    for username, chat_id, app_name, url in rows:
+        if chat_id not in users_dict:
+            users_dict[chat_id] = {'username': username, 'apps': []}
+        
+        if app_name and url:
+            users_dict[chat_id]['apps'].append(app_name)
+            total_links += 1
+            unique_urls.add(url)
+
+    text = f"👑 <b>Секретная Панель Администратора:</b>\n\n"
+    text += f"👥 Всего юзеров в боте: <b>{len(users_dict)}</b>\n"
+    text += f"🔗 Всего отслеживается ссылок: <b>{total_links}</b> (Уникальных: {len(unique_urls)})\n\n"
+    text += "<b>📋 Кто что отслеживает:</b>\n\n"
+
+    for cid, data in users_dict.items():
+        uname = f"@{data['username']}" if data['username'] else f"ID: {cid}"
+        apps_list = ", ".join(data['apps']) if data['apps'] else "Ничего не отслеживает"
+        text += f"👤 <b>{uname}</b>\n└ <i>{apps_list}</i>\n\n"
+
+    # Если текста очень много (лимит ТГ - 4096 символов), обрезаем
+    if len(text) > 4000:
+        bot.send_message(m.chat.id, text[:4000] + "\n... (список слишком длинный)", parse_mode='html')
+    else:
+        bot.send_message(m.chat.id, text, parse_mode='html', disable_web_page_preview=True)
+
+
 @bot.message_handler(func=lambda m: 'testflight.apple.com/join/' in m.text)
 def handle_link(m):
     found = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', m.text)
