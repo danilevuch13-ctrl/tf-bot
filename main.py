@@ -83,7 +83,7 @@ def init_db():
         cur.close()
 
 # =================================================================
-# --- ЛОГИКА ПАРСИНГА (АНТИ-ДЕТЕКТ) ---
+# --- ЛОГИКА ПАРСИНГА (АНТИ-ДЕТЕКТ + JAVASCRIPT ПРОВЕРКА) ---
 # =================================================================
 
 def check_testflight_status(url):
@@ -100,14 +100,19 @@ def check_testflight_status(url):
         if "join" not in response.url:
             return "ERROR_BLOCKED_BY_APPLE"
 
-        content = response.text.lower()
+        content = response.text
 
-        # 1. Признаки FULL (Только точные совпадения)
-        if 'is full' in content or "isn't accepting" in content:
+        # 🚨 УЛЬТИМАТИВНАЯ ПРОВЕРКА ПО СИСТЕМНОЙ ПЕРЕМЕННОЙ APPLE 🚨
+        if "var showSteps = true" in content:
+            return "OPEN"
+        elif "var showSteps = false" in content:
             return "FULL"
 
-        # 2. Признаки OPEN (Точные признаки наличия кнопки или диплинка)
-        if 'itms-beta://' in content or 'button-cta' in content or 'start testing' in content or 'to join the' in content:
+        # Резервный вариант на случай, если Apple поменяет код страницы
+        content_lower = content.lower()
+        if 'is full' in content_lower or "isn't accepting" in content_lower:
+            return "FULL"
+        if 'itms-beta://' in content_lower or 'to join the' in content_lower:
             return "OPEN"
 
         return "ERROR_PARSE"
@@ -156,7 +161,7 @@ def monitor_worker(chat_id, url):
 
                 if "ERROR" in current_status:
                     cur.close()
-                    # Если нас блокируют, спим подольше, чтобы не злить Apple
+                    # Если нас блокируют, спим подольше
                     time.sleep(10) 
                     continue
 
@@ -177,7 +182,7 @@ def monitor_worker(chat_id, url):
         except Exception as e:
             logger.error(f"Worker loop error: {e}")
         
-        # Оставил 1 секунду. 0.5 может спровоцировать WAF быстрее.
+        # Частота запросов (1 секунда оптимально при маскировке под Safari)
         time.sleep(1)
 
 def start_thread(chat_id, url):
@@ -207,7 +212,7 @@ def send_settings_menu(chat_id, message_id=None):
     full_btn_text = "🔴 Уведомления о FULL: ВКЛ" if notify_full else "⭕️ Уведомления о FULL: ВЫКЛ"
     markup.add(types.InlineKeyboardButton(full_btn_text, callback_data="toggle_full"))
 
-    text = "<a href='https://t.me/NuviraByteCore_bot'>👋 NuviraByteCore</a> <b>TestFlight Tracker</b>\n\nПришли ссылку для отслеживания.\n⚙️ Настройки:"
+    text = "👋 <a href='https://t.me/NuviraByteCore_bot'>NuviraByteCore</a> <b>TestFlight Tracker</b>\n\nПришли ссылку для отслеживания.\n⚙️ Настройки:"
 
     if message_id:
         bot.edit_message_text(text, chat_id, message_id, parse_mode='html', reply_markup=markup, disable_web_page_preview=True)
@@ -264,7 +269,7 @@ def cmd_test(m):
     if len(parts) < 2: return bot.reply_to(m, "Укажи ссылку. Пример: /test https://...")
     
     url = parts[1].strip()
-    bot.reply_to(m, "🔍 Тестирую маскировку под Safari...")
+    bot.reply_to(m, "🔍 Тестирую логику JS и маскировку под Safari...")
     
     status = check_testflight_status(url)
     
@@ -275,7 +280,7 @@ def cmd_test(m):
             f.write(res.text)
         
         with open("debug_apple.html", "rb") as doc:
-            bot.send_document(m.chat.id, doc, caption=f"Текущий статус бота: {status}\n\nЕсли статус ERROR_BLOCKED_BY_APPLE, значит даже маскировка не спасла от WAF на серверах Render.")
+            bot.send_document(m.chat.id, doc, caption=f"Статус бота: {status}")
     except Exception as e:
         bot.send_message(m.chat.id, f"Статус: {status}\nОшибка при дебаге: {e}")
 
