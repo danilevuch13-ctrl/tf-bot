@@ -83,20 +83,19 @@ def init_db():
         cur.close()
 
 # =================================================================
-# --- ЛОГИКА ПАРСИНГА (АНТИ-ДЕТЕКТ + JAVASCRIPT ПРОВЕРКА) ---
+# --- ЛОГИКА ПАРСИНГА (СКОРОСТНЫЕ СЕССИИ + JS ПРОВЕРКА) ---
 # =================================================================
 
-def check_testflight_status(url):
+def check_testflight_status(url, session):
     try:
         clean_url = url.split('?')[0]
         
-        # impersonate="safari15_5" заставляет Apple думать, что мы - браузер Safari на Маке
-        response = requests.get(clean_url, headers=HEADERS, impersonate="safari15_5", timeout=10)
+        # Используем открытую сессию для моментального ответа
+        response = session.get(clean_url, headers=HEADERS, timeout=7)
         
         if response.status_code == 429: return "ERROR_429"
         if response.status_code != 200: return f"ERROR_HTTP_{response.status_code}"
 
-        # Если в финальном URL нет слова join, значит Apple спалила нас и перекинула на справку
         if "join" not in response.url:
             return "ERROR_BLOCKED_BY_APPLE"
 
@@ -141,6 +140,9 @@ monitors_lock = threading.Lock()
 def monitor_worker(chat_id, url):
     key = (chat_id, url)
     
+    # СОЗДАЕМ СЕССИЮ ОДИН РАЗ ДЛЯ ЭТОГО ПОТОКА
+    session = requests.Session(impersonate="safari15_5")
+    
     while True:
         try:
             with get_db() as conn:
@@ -150,6 +152,7 @@ def monitor_worker(chat_id, url):
                 res = cur.fetchone()
                 if not res: 
                     with monitors_lock: active_monitors.pop(key, None)
+                    session.close() # Закрываем сессию, если удалили ссылку
                     return
                 last_status, app_name = res
 
@@ -157,12 +160,13 @@ def monitor_worker(chat_id, url):
                 user_settings = cur.fetchone()
                 silent_mode, notify_full = user_settings if user_settings else (False, True)
 
-                current_status = check_testflight_status(url)
+                # ПЕРЕДАЕМ СЕССИЮ В ФУНКЦИЮ ПРОВЕРКИ
+                current_status = check_testflight_status(url, session)
 
                 if "ERROR" in current_status:
                     cur.close()
-                    # Если нас блокируют, спим подольше
-                    time.sleep(10) 
+                    # Уменьшили штрафное время до 3 секунд
+                    time.sleep(3) 
                     continue
 
                 if current_status != last_status:
@@ -182,7 +186,7 @@ def monitor_worker(chat_id, url):
         except Exception as e:
             logger.error(f"Worker loop error: {e}")
         
-        # Частота запросов (1 секунда оптимально при маскировке под Safari)
+        # Скоростная задержка в 1 секунду работает стабильно благодаря сессиям
         time.sleep(1)
 
 def start_thread(chat_id, url):
@@ -271,11 +275,13 @@ def cmd_test(m):
     url = parts[1].strip()
     bot.reply_to(m, "🔍 Тестирую логику JS и маскировку под Safari...")
     
-    status = check_testflight_status(url)
+    # Создаем временную сессию для теста
+    session = requests.Session(impersonate="safari15_5")
+    status = check_testflight_status(url, session)
     
     try:
         clean_url = url.split('?')[0]
-        res = requests.get(clean_url, headers=HEADERS, impersonate="safari15_5", timeout=10)
+        res = session.get(clean_url, headers=HEADERS, timeout=10)
         with open("debug_apple.html", "w", encoding="utf-8") as f:
             f.write(res.text)
         
@@ -283,6 +289,8 @@ def cmd_test(m):
             bot.send_document(m.chat.id, doc, caption=f"Статус бота: {status}")
     except Exception as e:
         bot.send_message(m.chat.id, f"Статус: {status}\nОшибка при дебаге: {e}")
+    finally:
+        session.close()
 
 @bot.message_handler(func=lambda m: 'testflight.apple.com/join/' in m.text)
 def handle_link(m):
