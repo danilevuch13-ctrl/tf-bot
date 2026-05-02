@@ -5,14 +5,12 @@ import threading
 import os
 import re
 import psycopg2
-from flask import Flask, render_template, jsonify, request
 from telebot import types
 from bs4 import BeautifulSoup
 
 # --- КОНФИГУРАЦИЯ ---
 TOKEN = '8626634626:AAHLC6m4k9sFvHGvKzxJrVkqcAqqH6hhNoA'
 DATABASE_URL = 'postgresql://tf_database_mepp_user:6QragyDz33MtEr0LyWr0OZ3izG9Mac9x@dpg-d7qcqubeo5us73fcmdfg-a/tf_database_mepp'
-RENDER_URL = 'https://tf-bot.onrender.com'
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -71,13 +69,11 @@ def get_link_metadata(url):
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
             title = soup.find('meta', property='og:title')
-            image = soup.find('meta', property='og:image')
             
             app_name = title['content'].replace('Join the ', '').replace(' beta', '') if title else "Unknown App"
-            icon_url = image['content'] if image else "https://developer.apple.com/assets/elements/icons/testflight/testflight-128x128_2x.png"
-            return app_name, icon_url
+            return app_name
     except: pass
-    return "Unknown App", "https://developer.apple.com/assets/elements/icons/testflight/testflight-128x128_2x.png"
+    return "Unknown App"
 
 def monitor_logic():
     while True:
@@ -104,17 +100,23 @@ def monitor_logic():
                 records = cur.fetchall()
                 if not records: continue
                 
-                old_status = records[0][1]
-                if current_status != old_status:
-                    for chat_id, _, silent, notify_full in records:
+                for chat_id, user_last_status, silent, notify_full in records:
+                    if current_status != user_last_status:
                         try:
+                            app_name = get_link_metadata(url)
+                            
                             if current_status == "OPEN":
-                                app_name, _ = get_link_metadata(url)
-                                bot.send_message(chat_id, f"🟢 Место появилось!\n📱 {app_name}\n{url}", disable_notification=silent)
-                            elif current_status == "FULL" and notify_full and old_status != "CHECKING":
-                                bot.send_message(chat_id, f"🔴 Места закончились для:\n{url}", disable_notification=silent)
+                                text_msg = f"🟢 {app_name} beta is Available now\n\n{url}"
+                                # Добавили disable_web_page_preview=True
+                                bot.send_message(chat_id, text_msg, disable_notification=silent, disable_web_page_preview=True)
+                                
+                            elif current_status == "FULL" and notify_full and user_last_status != "CHECKING":
+                                text_msg = f"🚫 {app_name} beta is Unavailable now"
+                                # Здесь тоже добавили на всякий случай
+                                bot.send_message(chat_id, text_msg, disable_notification=silent, disable_web_page_preview=True)
                         except: pass
-                    cur.execute("UPDATE links SET last_status = %s WHERE url = %s", (current_status, url))
+                        
+                        cur.execute("UPDATE links SET last_status = %s WHERE chat_id = %s AND url = %s", (current_status, chat_id, url))
                 
                 time.sleep(1)
                 
@@ -136,7 +138,6 @@ def get_settings_keyboard(chat_id):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton(f"🔔 Звук: {'ВЫКЛ' if silent else 'ВКЛ'}", callback_data="toggle_silent"))
     markup.add(types.InlineKeyboardButton(f"🔴 Уведомления о FULL: {'ВКЛ' if full else 'ВЫКЛ'}", callback_data="toggle_full"))
-    markup.add(types.InlineKeyboardButton("📱 Открыть Mini App", web_app=types.WebAppInfo(RENDER_URL)))
     return markup
 
 @bot.message_handler(commands=['start'])
@@ -148,8 +149,12 @@ def send_welcome(message):
     conn.commit(); cur.close(); conn.close()
     
     text = (f"👋 <b><a href='https://t.me/NuviraByteCore'>NuviraByteCore</a> TestFlight Tracker</b>\n\n"
-            f"Пришли ссылку для отслеживания.\n"
-            f"⚙️ Настройки и Mini App:")
+            f"Просто отправь мне ссылку TestFlight, и я начну её отслеживать.\n\n"
+            f"<b>Команды:</b>\n"
+            f"/list — посмотреть свои ссылки\n"
+            f"/del <i>ссылка</i> — удалить ссылку\n"
+            f"/test <i>ссылка</i> — проверить статус прямо сейчас\n\n"
+            f"⚙️ <b>Настройки уведомлений:</b>")
     bot.send_message(uid, text, parse_mode='html', reply_markup=get_settings_keyboard(uid), disable_web_page_preview=True)
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -166,9 +171,21 @@ def callback_query(call):
 @bot.message_handler(commands=['list'])
 def list_links(message):
     conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("SELECT url FROM links WHERE chat_id = %s", (message.chat.id,))
+    cur.execute("SELECT url, last_status FROM links WHERE chat_id = %s", (message.chat.id,))
     rows = cur.fetchall(); cur.close(); conn.close()
-    bot.reply_to(message, "📋 Твои ссылки:\n\n" + "\n".join([r[0] for r in rows]) if rows else "Список пуст.")
+    
+    if not rows:
+        bot.reply_to(message, "Твой список пуст.")
+        return
+        
+    text = "📋 <b>Твои отслеживаемые ссылки:</b>\n\n"
+    for url, status in rows:
+        if status == "OPEN": icon = "🟢"
+        elif status == "FULL": icon = "🚫"
+        else: icon = "🟠"
+        text += f"{icon} {url}\n\n"
+        
+    bot.reply_to(message, text, parse_mode='html', disable_web_page_preview=True)
 
 @bot.message_handler(commands=['del'])
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('del') and m.reply_to_message)
@@ -184,8 +201,8 @@ def delete_link(message):
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (message.chat.id, target))
         conn.commit(); cur.close(); conn.close()
-        bot.reply_to(message, "🗑 Удалено.")
-    else: bot.reply_to(message, "❌ Ссылка не найдена.")
+        bot.reply_to(message, "🗑 Ссылка удалена.")
+    else: bot.reply_to(message, "❌ Ссылка не найдена. Напиши: /del ссылка")
 
 @bot.message_handler(commands=['danyaxap'])
 def admin_stats(message):
@@ -203,7 +220,7 @@ def test_apple_connection(message):
         return
         
     url = parts[1].strip()
-    bot.reply_to(message, "⏳ Стучусь к Apple с сервера Render...")
+    bot.reply_to(message, "⏳ Стучусь к Apple...")
     
     try:
         res = requests.get(url, headers=HEADERS, timeout=10)
@@ -213,7 +230,17 @@ def test_apple_connection(message):
             bot.reply_to(message, f"🚫 Код: {status_code}. Apple заблокировал IP сервера Render.")
         elif status_code == 200:
             parsed_status = check_testflight_slot(url)
-            bot.reply_to(message, f"✅ Код 200 (Доступ есть).\n🤖 Парсер увидел статус: {parsed_status}")
+            
+            if "ERROR" not in parsed_status:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("UPDATE links SET last_status = %s WHERE chat_id = %s AND url = %s", (parsed_status, message.chat.id, url))
+                conn.commit()
+                cur.close()
+                conn.close()
+                bot.reply_to(message, f"✅ Доступ есть.\n🤖 Статус: {parsed_status}\n💾 База обновлена.", disable_web_page_preview=True)
+            else:
+                bot.reply_to(message, f"✅ Доступ есть.\n🤖 Но парсер выдал ошибку: {parsed_status}", disable_web_page_preview=True)
         else:
             bot.reply_to(message, f"⚠️ Неизвестный код: {status_code}")
     except Exception as e:
@@ -228,71 +255,12 @@ def add_link(message):
         try:
             cur.execute("INSERT INTO links (chat_id, url, last_status) VALUES (%s, %s, 'CHECKING')", (message.chat.id, url))
             conn.commit()
-            app_name, _ = get_link_metadata(url)
+            app_name = get_link_metadata(url)
             bot.reply_to(message, f"✅ Добавлено: {app_name}")
-        except: bot.reply_to(message, "⚠️ Уже в списке.")
+        except: bot.reply_to(message, "⚠️ Эта ссылка уже есть в твоем списке.")
         cur.close(); conn.close()
-
-# --- ВЕБ-СЕРВЕР (API ДЛЯ MINI APP) ---
-app = Flask(__name__, template_folder='templates')
-
-@app.route('/')
-def home():
-    return render_template('index.html')
-
-@app.route('/api/get_links')
-def api_get_links():
-    uid = request.args.get('uid')
-    if not uid: return jsonify([])
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("SELECT url, last_status FROM links WHERE chat_id = %s", (uid,))
-    rows = cur.fetchall(); cur.close(); conn.close()
-    
-    data = []
-    for url, status in rows:
-        name, icon = get_link_metadata(url)
-        data.append({'url': url, 'name': name, 'icon': icon, 'status': status})
-    return jsonify(data)
-
-@app.route('/api/add_link', methods=['POST'])
-def api_add_link():
-    data = request.json
-    uid = data.get('uid')
-    url_text = data.get('url', '')
-    
-    match = re.search(r'(https://testflight\.apple\.com/join/[a-zA-Z0-9_-]+)', url_text)
-    if not match or not uid:
-        return jsonify({'success': False, 'error': 'Некорректная ссылка TestFlight'})
-        
-    url = match.group(1)
-    conn = get_db_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute("INSERT INTO links (chat_id, url, last_status) VALUES (%s, %s, 'CHECKING')", (uid, url))
-        conn.commit()
-        cur.close(); conn.close()
-        return jsonify({'success': True})
-    except Exception:
-        cur.close(); conn.close()
-        return jsonify({'success': False, 'error': 'Эта ссылка уже есть в твоем списке'})
-
-@app.route('/api/delete_link', methods=['POST'])
-def api_delete_link():
-    data = request.json
-    uid = data.get('uid')
-    url = data.get('url')
-    if not uid or not url:
-        return jsonify({'success': False})
-        
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (uid, url))
-    conn.commit()
-    cur.close(); conn.close()
-    return jsonify({'success': True})
 
 if __name__ == '__main__':
     init_db()
-    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))), daemon=True).start()
     threading.Thread(target=monitor_logic, daemon=True).start()
     bot.infinity_polling()
