@@ -25,7 +25,7 @@ TOKEN = os.environ.get('BOT_TOKEN')
 DATABASE_URL = os.environ.get('DATABASE_URL')
 ADMIN_ID = 689318312  
 
-# Оставляем только язык, остальное библиотека подделает сама
+# Базовые заголовки (остальное библиотека подделает сама)
 HEADERS = {
     'Accept-Language': 'en-US,en;q=0.9'
 }
@@ -83,15 +83,27 @@ def init_db():
         cur.close()
 
 # =================================================================
-# --- ЛОГИКА ПАРСИНГА (СКОРОСТНЫЕ СЕССИИ + JS ПРОВЕРКА) ---
+# --- ЛОГИКА ПАРСИНГА (СЕССИИ + JS ПРОВЕРКА + ОБХОД КЭША) ---
 # =================================================================
 
 def check_testflight_status(url, session):
     try:
         clean_url = url.split('?')[0]
         
-        # Используем открытую сессию для моментального ответа
-        response = session.get(clean_url, headers=HEADERS, timeout=7)
+        # 🚨 АНТИ-КЭШ: Генерируем уникальный хвост времени
+        cache_buster = int(time.time() * 1000)
+        anti_cache_url = f"{clean_url}?t={cache_buster}"
+
+        # 🚨 ЖЕСТКИЙ ЗАПРЕТ КЭШИРОВАНИЯ
+        no_cache_headers = {
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        }
+        
+        # Стучимся по уникальной ссылке через открытую сессию
+        response = session.get(anti_cache_url, headers=no_cache_headers, timeout=7)
         
         if response.status_code == 429: return "ERROR_429"
         if response.status_code != 200: return f"ERROR_HTTP_{response.status_code}"
@@ -101,7 +113,7 @@ def check_testflight_status(url, session):
 
         content = response.text
 
-        # 🚨 УЛЬТИМАТИВНАЯ ПРОВЕРКА ПО СИСТЕМНОЙ ПЕРЕМЕННОЙ APPLE 🚨
+        # 🚨 ПРОВЕРКА ПО СИСТЕМНОЙ ПЕРЕМЕННОЙ APPLE 🚨
         if "var showSteps = true" in content:
             return "OPEN"
         elif "var showSteps = false" in content:
@@ -160,12 +172,10 @@ def monitor_worker(chat_id, url):
                 user_settings = cur.fetchone()
                 silent_mode, notify_full = user_settings if user_settings else (False, True)
 
-                # ПЕРЕДАЕМ СЕССИЮ В ФУНКЦИЮ ПРОВЕРКИ
                 current_status = check_testflight_status(url, session)
 
                 if "ERROR" in current_status:
                     cur.close()
-                    # Уменьшили штрафное время до 3 секунд
                     time.sleep(3) 
                     continue
 
@@ -186,7 +196,7 @@ def monitor_worker(chat_id, url):
         except Exception as e:
             logger.error(f"Worker loop error: {e}")
         
-        # Скоростная задержка в 1 секунду работает стабильно благодаря сессиям
+        # Скоростная задержка в 1 секунду
         time.sleep(1)
 
 def start_thread(chat_id, url):
@@ -273,7 +283,7 @@ def cmd_test(m):
     if len(parts) < 2: return bot.reply_to(m, "Укажи ссылку. Пример: /test https://...")
     
     url = parts[1].strip()
-    bot.reply_to(m, "🔍 Тестирую логику JS и маскировку под Safari...")
+    bot.reply_to(m, "🔍 Тестирую анти-кэш и JS...")
     
     # Создаем временную сессию для теста
     session = requests.Session(impersonate="safari15_5")
@@ -281,7 +291,17 @@ def cmd_test(m):
     
     try:
         clean_url = url.split('?')[0]
-        res = session.get(clean_url, headers=HEADERS, timeout=10)
+        cache_buster = int(time.time() * 1000)
+        anti_cache_url = f"{clean_url}?t={cache_buster}"
+        
+        no_cache_headers = {
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        }
+        
+        res = session.get(anti_cache_url, headers=no_cache_headers, timeout=10)
         with open("debug_apple.html", "w", encoding="utf-8") as f:
             f.write(res.text)
         
