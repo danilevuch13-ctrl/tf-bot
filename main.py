@@ -84,7 +84,7 @@ def init_db():
         cur.close()
 
 # =================================================================
-# --- ЛОГИКА ПАРСИНГА (УЛЬТРА-НАДЕЖНАЯ) ---
+# --- ЛОГИКА ПАРСИНГА ---
 # =================================================================
 
 def check_testflight_status(url):
@@ -97,22 +97,16 @@ def check_testflight_status(url):
 
         content = response.text.lower()
 
-        # 1. 100% признак FULL (на разных языках: англ, рус, укр)
-        full_signs = ['is full', 'not accepting', 'заполнена', 'мест нет', 'не принимает', 'переповнена', 'не приймає']
+        # 1. Признаки FULL
+        full_signs = ['is full', 'not accepting', 'заполнена', 'мест нет', 'не принимает', 'переповнена', 'не приймає', "isn't accepting"]
         if any(sign in content for sign in full_signs):
             return "FULL"
 
-        # 2. ЖЕЛЕЗОБЕТОННЫЙ признак OPEN - наличие диплинка или кнопки
-        # Если место есть, Apple вставляет ссылку itms-beta:// для открытия приложения
-        if 'itms-beta://' in content or 'class="button-cta"' in content:
-            return "OPEN"
-
-        # 3. Резервный текстовый поиск (на разных языках)
-        open_signs = ['start testing', 'accept', 'принять', 'начать', 'почати', 'долучитися']
+        # 2. Признаки OPEN (расширено: добавили фразы с десктопной страницы TestFlight)
+        open_signs = ['itms-beta://', 'class="button-cta"', 'start testing', 'accept', 'принять', 'начать', 'почати', 'долучитися', 'to join the', 'open the link on your iphone']
         if any(sign in content for sign in open_signs):
             return "OPEN"
 
-        # Если дошли сюда, ничего не совпало
         return "ERROR_PARSE"
     except Exception as e:
         logger.error(f"Status check failed: {e}")
@@ -257,13 +251,30 @@ def cmd_del(m):
         cur.execute("DELETE FROM links WHERE chat_id = %s AND url = %s", (m.chat.id, parts[1].strip()))
     bot.reply_to(m, "🗑 Удалено.")
 
+# 🚨 МОДЕРНИЗИРОВАННАЯ КОМАНДА /test (СКАЧИВАЕТ HTML) 🚨
 @bot.message_handler(commands=['test'])
 def cmd_test(m):
     if m.chat.id != ADMIN_ID: return
     parts = m.text.split(maxsplit=1)
-    if len(parts) < 2: return
+    if len(parts) < 2: return bot.reply_to(m, "Укажи ссылку. Пример: /test https://...")
+    
     url = parts[1].strip()
-    bot.reply_to(m, f"🔍 Тестирую...\nСтатус: {check_testflight_status(url)}")
+    bot.reply_to(m, "🔍 Тестирую и скачиваю страницу с Apple...")
+    
+    status = check_testflight_status(url)
+    
+    try:
+        clean_url = url.split('?')[0]
+        res = requests.get(clean_url, headers=HEADERS, timeout=7)
+        # Сохраняем то, что видит бот, в файл
+        with open("debug_apple.html", "w", encoding="utf-8") as f:
+            f.write(res.text)
+        
+        # Отправляем файл в Телеграм
+        with open("debug_apple.html", "rb") as doc:
+            bot.send_document(m.chat.id, doc, caption=f"Статус бота: {status}\n\n❗️ Открой этот HTML-файл. Там ровно то, что отдала Apple нашему серверу.")
+    except Exception as e:
+        bot.send_message(m.chat.id, f"Статус: {status}\nНе удалось скачать HTML: {e}")
 
 @bot.message_handler(func=lambda m: 'testflight.apple.com/join/' in m.text)
 def handle_link(m):
@@ -277,7 +288,6 @@ def handle_link(m):
             cur = conn.cursor()
             cur.execute("INSERT INTO links (chat_id, url, app_name) VALUES (%s, %s, %s)", (m.chat.id, url, name))
         start_thread(m.chat.id, url)
-        # НОВОЕ СООБЩЕНИЕ ПРИ ДОБАВЛЕНИИ:
         bot.reply_to(m, f"Отслеживаю <b>{name}</b>", parse_mode='html')
     except: bot.reply_to(m, "⚠️ Уже в списке.")
 
