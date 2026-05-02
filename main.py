@@ -21,13 +21,13 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get('BOT_TOKEN')
 DATABASE_URL = os.environ.get('DATABASE_URL')
-ADMIN_ID = 689318312  # Твой ID из getmyid_bot
+ADMIN_ID = 689318312  
 
-# Используем максимально "человечный" User-Agent
+# Жестко ставим английский язык (en-US), чтобы парсер не ломался из-за локализации серверов Render
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept-Language': 'en-US,en;q=0.9',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive'
 }
@@ -40,7 +40,7 @@ bot = telebot.TeleBot(TOKEN)
 
 app = Flask(__name__)
 @app.route('/')
-def index(): return "🚀 NuviraByteCore Ultra-Fast Monitoring (0.5s) is Live!"
+def index(): return "🚀 NuviraByteCore Tracker is Live!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -72,60 +72,59 @@ def get_db():
 def init_db():
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("CREATE TABLE IF NOT EXISTS users (chat_id BIGINT PRIMARY KEY, username TEXT, silent_mode BOOLEAN DEFAULT FALSE)")
+        # Добавляем таблицу юзеров с настройками звука и FULL-уведомлений
+        cur.execute("CREATE TABLE IF NOT EXISTS users (chat_id BIGINT PRIMARY KEY, username TEXT, silent_mode BOOLEAN DEFAULT FALSE, notify_full BOOLEAN DEFAULT TRUE)")
+        
+        # Обновляем старую таблицу, если в ней нет новых колонок (защита от ошибок)
+        try: cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS silent_mode BOOLEAN DEFAULT FALSE")
+        except: pass
+        try: cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_full BOOLEAN DEFAULT TRUE")
+        except: pass
+
         cur.execute("CREATE TABLE IF NOT EXISTS links (id SERIAL PRIMARY KEY, chat_id BIGINT, url TEXT, last_status TEXT DEFAULT 'CHECKING', app_name TEXT DEFAULT 'Unknown App', UNIQUE(chat_id, url))")
         try: cur.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS app_name TEXT DEFAULT 'Unknown App'")
         except: pass
         cur.close()
 
 # =================================================================
-# --- ЛОГИКА ПАРСИНГА (УЛУЧШЕННАЯ) ---
+# --- ЛОГИКА ПАРСИНГА ---
 # =================================================================
 
 def check_testflight_status(url):
-    """Глубокий анализ страницы Apple"""
     try:
-        # Убираем параметры из ссылки для чистоты запроса
         clean_url = url.split('?')[0]
         response = requests.get(clean_url, headers=HEADERS, timeout=7)
         
-        if response.status_code != 200:
+        if response.status_code == 429:
+            return "ERROR_429"
+        elif response.status_code != 200:
             return f"ERROR_HTTP_{response.status_code}"
 
         soup = BeautifulSoup(response.text, 'html.parser')
         content_lower = response.text.lower()
 
-        # 1. Ищем кнопку "Start Testing" (признак OPEN)
+        # Ищем кнопку
         cta_btn = soup.find('a', class_='button-cta')
-        if cta_btn:
-            btn_text = cta_btn.get_text().lower()
-            if 'start' in btn_text or 'начать' in btn_text:
-                return "OPEN"
+        if cta_btn and 'start' in cta_btn.get_text().lower():
+            return "OPEN"
 
-        # 2. Ищем текст статуса в специальном блоке (признак FULL)
+        # Ищем статус
         status_div = soup.find('div', class_='beta-status')
         if status_div:
             st_text = status_div.get_text().lower()
-            if 'full' in st_text or 'полная' in st_text or 'мест нет' in st_text:
+            if 'full' in st_text or 'not accepting' in st_text:
                 return "FULL"
 
-        # 3. Резервный текстовый поиск по всей странице
-        if 'accepting' in content_lower and 'start testing' in content_lower:
-            return "OPEN"
-        if 'beta is full' in content_lower or 'this beta is no longer' in content_lower:
-            return "FULL"
+        # Резервный поиск по тексту
+        if 'start testing' in content_lower: return "OPEN"
+        if 'beta is full' in content_lower or "isn't accepting" in content_lower: return "FULL"
         
-        # 4. Проверка на капчу (если Apple начала блокировать Render)
-        if 'captcha' in content_lower or 'verify you are human' in content_lower:
-            return "ERROR_CAPTCHA"
-
         return "ERROR_PARSE"
     except Exception as e:
         logger.error(f"Status check failed: {e}")
         return "ERROR_REQ"
 
 def get_app_name(url):
-    """Достает название из мета-тегов"""
     try:
         res = requests.get(url, headers=HEADERS, timeout=5)
         soup = BeautifulSoup(res.text, 'html.parser')
@@ -136,7 +135,7 @@ def get_app_name(url):
     return "Unknown App"
 
 # =================================================================
-# --- МОНИТОРИНГ (0.5 СЕКУНДЫ) ---
+# --- МОНИТОРИНГ ---
 # =================================================================
 
 active_monitors = {}
@@ -144,47 +143,52 @@ monitors_lock = threading.Lock()
 
 def monitor_worker(chat_id, url):
     key = (chat_id, url)
-    logger.info(f"Worker started for {url}")
     
     while True:
         try:
             with get_db() as conn:
                 cur = conn.cursor()
+                
+                # Получаем ссылку
                 cur.execute("SELECT last_status, app_name FROM links WHERE chat_id = %s AND url = %s", (chat_id, url))
                 res = cur.fetchone()
-                
-                if not res: # Если удалили ссылку
+                if not res: 
                     with monitors_lock: active_monitors.pop(key, None)
                     return
-
                 last_status, app_name = res
+
+                # Получаем настройки юзера (звук и уведомления)
+                cur.execute("SELECT silent_mode, notify_full FROM users WHERE chat_id = %s", (chat_id,))
+                user_settings = cur.fetchone()
+                silent_mode, notify_full = user_settings if user_settings else (False, True)
+
                 current_status = check_testflight_status(url)
 
-                # Если поймали ошибку - не меняем статус, просто ждем
                 if "ERROR" in current_status:
                     cur.close()
-                    time.sleep(1) 
+                    time.sleep(5) # При ошибке спим дольше, чтобы не словить бан от Apple
                     continue
 
-                # Если статус изменился - УРА!
                 if current_status != last_status:
                     if app_name == "Unknown App": app_name = get_app_name(url)
 
                     if current_status == "OPEN":
-                        # Делаем название кликабельным
-                        msg = f"🟢 <b><a href='{url}'>{app_name}</a></b>\nМЕСТО ЕСТЬ! Залетай!"
-                        bot.send_message(chat_id, msg, parse_mode='html', disable_web_page_preview=True)
+                        # НОВЫЙ ФОРМАТ УВЕДОМЛЕНИЯ О МЕСТЕ
+                        msg = f"🟢 <b>{app_name}</b> появилось место\n{url}"
+                        bot.send_message(chat_id, msg, parse_mode='html', disable_web_page_preview=True, disable_notification=silent_mode)
                     
                     elif current_status == "FULL" and last_status != "CHECKING":
-                        msg = f"🚫 <b><a href='{url}'>{app_name}</a></b>\nМеста закончились."
-                        bot.send_message(chat_id, msg, parse_mode='html', disable_web_page_preview=True)
+                        # Проверяем, включены ли уведомления о FULL
+                        if notify_full:
+                            msg = f"🚫 <b>{app_name}</b>\nМеста закончились.\n{url}"
+                            bot.send_message(chat_id, msg, parse_mode='html', disable_web_page_preview=True, disable_notification=silent_mode)
 
                     cur.execute("UPDATE links SET last_status = %s, app_name = %s WHERE chat_id = %s AND url = %s", (current_status, app_name, chat_id, url))
                 cur.close()
         except Exception as e:
             logger.error(f"Worker loop error: {e}")
         
-        # Частота 0.5с
+        # Задержка. Если Apple будет банить IP на Render, увеличь это число (например до 3 или 5).
         time.sleep(0.5)
 
 def start_thread(chat_id, url):
@@ -196,15 +200,53 @@ def start_thread(chat_id, url):
         t.start()
 
 # =================================================================
-# --- ОБРАБОТКА КОМАНД ---
+# --- ИНТЕРФЕЙС И КОМАНДЫ ---
 # =================================================================
+
+def send_settings_menu(chat_id, message_id=None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT silent_mode, notify_full FROM users WHERE chat_id = %s", (chat_id,))
+        res = cur.fetchone()
+        silent_mode, notify_full = res if res else (False, True)
+
+    markup = types.InlineKeyboardMarkup()
+    
+    # Кнопка звука
+    sound_btn_text = "🔕 Звук: ВЫКЛ" if silent_mode else "🔔 Звук: ВКЛ"
+    markup.add(types.InlineKeyboardButton(sound_btn_text, callback_data="toggle_sound"))
+    
+    # Кнопка FULL уведомлений
+    full_btn_text = "🔴 Уведомления о FULL: ВКЛ" if notify_full else "⭕️ Уведомления о FULL: ВЫКЛ"
+    markup.add(types.InlineKeyboardButton(full_btn_text, callback_data="toggle_full"))
+
+    text = "<a href='https://t.me/NuviraByteCore_bot'>👋 NuviraByteCore</a> <b>TestFlight Tracker</b>\n\nПришли ссылку для отслеживания.\n⚙️ Настройки:"
+
+    if message_id:
+        bot.edit_message_text(text, chat_id, message_id, parse_mode='html', reply_markup=markup, disable_web_page_preview=True)
+    else:
+        bot.send_message(chat_id, text, parse_mode='html', reply_markup=markup, disable_web_page_preview=True)
+
 
 @bot.message_handler(commands=['start'])
 def start(m):
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("INSERT INTO users (chat_id, username) VALUES (%s, %s) ON CONFLICT (chat_id) DO NOTHING", (m.chat.id, m.from_user.username))
-    bot.send_message(m.chat.id, "👋 Привет! Я мониторю TestFlight каждые <b>0.5с</b>.\nПришли ссылку.", parse_mode='html')
+    send_settings_menu(m.chat.id)
+
+@bot.callback_query_handler(func=lambda call: call.data in ['toggle_sound', 'toggle_full'])
+def handle_callbacks(call):
+    chat_id = call.message.chat.id
+    with get_db() as conn:
+        cur = conn.cursor()
+        if call.data == "toggle_sound":
+            cur.execute("UPDATE users SET silent_mode = NOT silent_mode WHERE chat_id = %s", (chat_id,))
+        elif call.data == "toggle_full":
+            cur.execute("UPDATE users SET notify_full = NOT notify_full WHERE chat_id = %s", (chat_id,))
+    
+    send_settings_menu(chat_id, call.message.message_id)
+    bot.answer_callback_query(call.id)
 
 @bot.message_handler(commands=['list'])
 def cmd_list(m):
@@ -248,7 +290,7 @@ def handle_link(m):
             cur = conn.cursor()
             cur.execute("INSERT INTO links (chat_id, url, app_name) VALUES (%s, %s, %s)", (m.chat.id, url, name))
         start_thread(m.chat.id, url)
-        bot.reply_to(m, f"✅ <b>{name}</b> добавлена в мониторинг (0.5с).", parse_mode='html')
+        bot.reply_to(m, f"✅ <b>{name}</b> добавлена в мониторинг.", parse_mode='html')
     except: bot.reply_to(m, "⚠️ Уже в списке.")
 
 # =================================================================
@@ -259,7 +301,6 @@ if __name__ == '__main__':
     init_pool()
     init_db()
     
-    # Восстановление потоков
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("SELECT chat_id, url FROM links")
@@ -267,6 +308,3 @@ if __name__ == '__main__':
     
     threading.Thread(target=run_flask, daemon=True).start()
     bot.infinity_polling(timeout=60, long_polling_timeout=30)
-
-# Этот код содержит расширенные проверки и исправленную логику парсинга,
-# чтобы избежать ERROR_PARSE и корректно уведомлять тебя о наличии мест.
