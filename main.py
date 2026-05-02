@@ -14,7 +14,7 @@ from flask import Flask
 # --- КОНФИГУРАЦИЯ ---
 TOKEN = os.environ['BOT_TOKEN']
 DATABASE_URL = os.environ['DATABASE_URL']
-ADMIN_ID = 689318312  # Твой Telegram ID вписан сюда!
+ADMIN_ID = 689318312  # Твой Telegram ID
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -75,13 +75,19 @@ def init_db():
            chat_id BIGINT,
            url TEXT,
            last_status TEXT DEFAULT 'CHECKING',
-           app_name TEXT DEFAULT 'Unknown App',
            UNIQUE(chat_id, url)
        )''')
+       
+       # Автоматическое добавление колонки app_name, если её нет в старой базе
+       try:
+           cur.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS app_name TEXT DEFAULT 'Unknown App'")
+       except Exception as e:
+           print(f"Обновление структуры БД не требуется или ошибка: {e}")
+           
        cur.close()
 
 def check_testflight_slot(url):
-   clean_url = url.split('?')[0] # Убрали ?t=... чтобы не бесить защиту Apple
+   clean_url = url.split('?')[0] 
    try:
        response = requests.get(clean_url, headers=HEADERS, timeout=10)
        if response.status_code == 200:
