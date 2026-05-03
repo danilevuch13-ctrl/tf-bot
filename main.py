@@ -320,7 +320,7 @@ def cmd_admin_panel(m):
 
     with get_db() as conn:
         cur = conn.cursor()
-        # Собираем всех юзеров и их ссылки (если есть)
+        # Собираем всех юзеров и их ссылки
         cur.execute("""
             SELECT u.username, u.chat_id, l.app_name, l.url 
             FROM users u 
@@ -341,7 +341,14 @@ def cmd_admin_panel(m):
             users_dict[chat_id] = {'username': username, 'apps': []}
         
         if app_name and url:
-            users_dict[chat_id]['apps'].append(app_name)
+            # Если имя неизвестно, добавляем хэш ссылки, чтобы было понятно, что это
+            if app_name == "Unknown App":
+                url_hash = url.split('/')[-1]
+                display_name = f"Unknown App ({url_hash})"
+            else:
+                display_name = app_name
+                
+            users_dict[chat_id]['apps'].append(display_name)
             total_links += 1
             unique_urls.add(url)
 
@@ -351,16 +358,21 @@ def cmd_admin_panel(m):
     text += "<b>📋 Кто что отслеживает:</b>\n\n"
 
     for cid, data in users_dict.items():
-        uname = f"@{data['username']}" if data['username'] else f"ID: {cid}"
+        # Убираем возможный дубль собачки @@
+        raw_uname = data['username']
+        if raw_uname:
+            clean_uname = raw_uname.replace('@', '')
+            uname = f"@{clean_uname}"
+        else:
+            uname = f"ID: {cid}"
+            
         apps_list = ", ".join(data['apps']) if data['apps'] else "Ничего не отслеживает"
         text += f"👤 <b>{uname}</b>\n└ <i>{apps_list}</i>\n\n"
 
-    # Если текста очень много (лимит ТГ - 4096 символов), обрезаем
     if len(text) > 4000:
         bot.send_message(m.chat.id, text[:4000] + "\n... (список слишком длинный)", parse_mode='html')
     else:
         bot.send_message(m.chat.id, text, parse_mode='html', disable_web_page_preview=True)
-
 
 @bot.message_handler(func=lambda m: 'testflight.apple.com/join/' in m.text)
 def handle_link(m):
